@@ -178,11 +178,19 @@ function validateInternalTransferLineProgress(internalTransfer: InternalTransfer
       throw new Error(`Received quantity cannot exceed picked quantity for ${lineItem.item_name}.`);
     }
 
-    if (lineItem.picked_quantity < lineItem.requested_quantity && !lineItem.shortage_notes.trim()) {
+    if (
+      lineItem.picked_quantity > 0 &&
+      lineItem.picked_quantity < lineItem.requested_quantity &&
+      !lineItem.shortage_notes.trim()
+    ) {
       throw new Error(`Shortage notes are required when picked quantity is short for ${lineItem.item_name}.`);
     }
 
-    if (lineItem.received_quantity < lineItem.picked_quantity && !lineItem.discrepancy_notes.trim()) {
+    if (
+      lineItem.received_quantity > 0 &&
+      lineItem.received_quantity < lineItem.picked_quantity &&
+      !lineItem.discrepancy_notes.trim()
+    ) {
       throw new Error(`Discrepancy notes are required when received quantity is short for ${lineItem.item_name}.`);
     }
   }
