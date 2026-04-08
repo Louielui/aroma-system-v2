@@ -1,12 +1,15 @@
 /*
- * File intent: provide local-storage-backed repository abstractions for Stores / Branch Operations Phase 2C.
- * Design reminder for this file: keep Stores records separate from Logistics and Internal Transfer, and keep replenishment request lifecycle limited to Stores-side demand capture, review, and approval.
+ * File intent: provide local-storage-backed repository abstractions for Stores / Branch Operations Phase 3.
+ * Design reminder for this file: keep Stores records separate from Logistics and Internal Transfer, keep replenishment requests demand-side only, and make handoff to Logistics explicit through conversion rather than mutation.
  */
 
+import { internalTransferRepository } from "@/modules/logistics/internal-transfers.repository";
+import type { InternalTransferUpsert } from "@/modules/logistics/internal-transfers.types";
 import {
   calculateOverageQuantity,
   calculateShortageQuantity,
   canCancelStoreReplenishmentRequest,
+  canConvertStoreReplenishmentRequest,
   canReviewStoreReplenishmentRequest,
   canStartStoreReplenishmentRequestReview,
   isStoreReplenishmentRequestEditable,
@@ -25,6 +28,7 @@ import {
 const STORE_PAR_LEVELS_STORAGE_KEY = "aroma-system-v2.stores.par-levels";
 const STORE_STOCK_TAKES_STORAGE_KEY = "aroma-system-v2.stores.stock-takes";
 const STORE_REPLENISHMENT_REQUESTS_STORAGE_KEY = "aroma-system-v2.stores.replenishment-requests";
+const DEFAULT_TRANSFER_SOURCE_LOCATION_ID = "Central Kitchen";
 
 const seedStoreParLevels: StoreParLevel[] = [
   {
@@ -134,31 +138,87 @@ function buildStoreReplenishmentRequestLineId(base: string, index: number) {
   return `store-replenishment-request-line-${base}-${index + 1}-${Date.now()}`;
 }
 
+function normalizeStoreReplenishmentRequestLine(
+  line: Omit<StoreReplenishmentRequestLine, "linked_internal_transfer_line_id" | "converted_quantity"> &
+    Partial<Pick<StoreReplenishmentRequestLine, "linked_internal_transfer_line_id" | "converted_quantity">>,
+): StoreReplenishmentRequestLine {
+  return {
+    ...line,
+    approved_quantity: line.approved_quantity ?? null,
+    linked_internal_transfer_line_id: line.linked_internal_transfer_line_id ?? null,
+    converted_quantity:
+      typeof line.converted_quantity === "number" && Number.isFinite(line.converted_quantity)
+        ? line.converted_quantity
+        : 0,
+  };
+}
+
 function buildReplenishmentRequestLines(
   input: StoreReplenishmentRequestCreateInput | StoreReplenishmentRequestUpdateInput,
   existingRequestId?: string,
 ): StoreReplenishmentRequestLine[] {
   const lineBase = existingRequestId ?? input.store_location_id;
 
-  return input.lines.map((line, index) => ({
-    id: line.id ?? buildStoreReplenishmentRequestLineId(lineBase, index),
-    source_store_stock_take_line_id: line.source_store_stock_take_line_id,
-    source_store_par_level_id: line.source_store_par_level_id,
-    raw_ingredient_id: line.raw_ingredient_id,
-    item_name: line.item_name,
-    category: line.category,
-    base_unit: line.base_unit,
-    par_quantity_snapshot: line.par_quantity_snapshot,
-    counted_quantity_snapshot: line.counted_quantity_snapshot,
-    shortage_quantity_snapshot: line.shortage_quantity_snapshot,
-    requested_quantity: line.requested_quantity,
-    approved_quantity: line.approved_quantity ?? null,
-    line_notes: line.line_notes,
-  }));
+  return input.lines.map((line, index) =>
+    normalizeStoreReplenishmentRequestLine({
+      id: line.id ?? buildStoreReplenishmentRequestLineId(lineBase, index),
+      source_store_stock_take_line_id: line.source_store_stock_take_line_id,
+      source_store_par_level_id: line.source_store_par_level_id,
+      raw_ingredient_id: line.raw_ingredient_id,
+      item_name: line.item_name,
+      category: line.category,
+      base_unit: line.base_unit,
+      par_quantity_snapshot: line.par_quantity_snapshot,
+      counted_quantity_snapshot: line.counted_quantity_snapshot,
+      shortage_quantity_snapshot: line.shortage_quantity_snapshot,
+      requested_quantity: line.requested_quantity,
+      approved_quantity: line.approved_quantity ?? null,
+      line_notes: line.line_notes,
+      linked_internal_transfer_line_id: null,
+      converted_quantity: 0,
+    }),
+  );
+}
+
+function normalizeStoreReplenishmentRequest(
+  request: Omit<
+    StoreReplenishmentRequest,
+    | "conversion_status"
+    | "linked_internal_transfer_id"
+    | "linked_internal_transfer_number"
+    | "converted_at"
+    | "converted_by_user_id"
+    | "lines"
+  > &
+    Partial<
+      Pick<
+        StoreReplenishmentRequest,
+        | "conversion_status"
+        | "linked_internal_transfer_id"
+        | "linked_internal_transfer_number"
+        | "converted_at"
+        | "converted_by_user_id"
+      >
+    > & {
+      lines: Array<
+        Omit<StoreReplenishmentRequestLine, "linked_internal_transfer_line_id" | "converted_quantity"> &
+          Partial<Pick<StoreReplenishmentRequestLine, "linked_internal_transfer_line_id" | "converted_quantity">>
+      >;
+    },
+): StoreReplenishmentRequest {
+  return {
+    ...request,
+    conversion_status: request.conversion_status ?? "not_converted",
+    linked_internal_transfer_id: request.linked_internal_transfer_id ?? null,
+    linked_internal_transfer_number: request.linked_internal_transfer_number ?? null,
+    converted_at: request.converted_at ?? null,
+    converted_by_user_id: request.converted_by_user_id ?? null,
+    lines: request.lines.map(normalizeStoreReplenishmentRequestLine),
+  };
 }
 
 const seedStoreReplenishmentRequests: StoreReplenishmentRequest[] = [
-  {
+  normalizeStoreReplenishmentRequest({
     id: "store-replenishment-request-downtown-2026-02-18-001",
     request_number: "SRR-20260218-001",
     store_location_id: "store-downtown",
@@ -187,11 +247,13 @@ const seedStoreReplenishmentRequests: StoreReplenishmentRequest[] = [
         requested_quantity: 5,
         approved_quantity: null,
         line_notes: "Requested to replenish the full shortage amount.",
+        linked_internal_transfer_line_id: null,
+        converted_quantity: 0,
       },
     ],
     created_at: new Date("2026-02-18T09:00:00.000Z").toISOString(),
     updated_at: new Date("2026-02-18T09:00:00.000Z").toISOString(),
-  },
+  }),
 ];
 
 let memoryStoreParLevels = [...seedStoreParLevels];
@@ -262,7 +324,7 @@ function readStoreReplenishmentRequests() {
     STORE_REPLENISHMENT_REQUESTS_STORAGE_KEY,
     seedStoreReplenishmentRequests,
     memoryStoreReplenishmentRequests,
-  );
+  ).map((request) => normalizeStoreReplenishmentRequest(request));
 }
 
 function buildStoreParLevelId(input: StoreParLevelUpsert) {
@@ -298,10 +360,7 @@ function buildStoreReplenishmentRequestNumber(
   ).padStart(3, "0")}`;
 }
 
-function requireStoreReplenishmentRequest(
-  items: StoreReplenishmentRequest[],
-  id: string,
-) {
+function requireStoreReplenishmentRequest(items: StoreReplenishmentRequest[], id: string) {
   const existing = items.find((item) => item.id === id);
 
   if (!existing) {
@@ -330,6 +389,52 @@ function stampReviewProgress(
   };
 }
 
+function buildTransferLineId(requestId: string, lineId: string, index: number) {
+  return `internal-transfer-line-${requestId}-${lineId}-${index + 1}`;
+}
+
+function buildConversionTransferInput(request: StoreReplenishmentRequest): InternalTransferUpsert {
+  const convertibleLines = request.lines.filter(
+    (line) => (line.approved_quantity ?? 0) > 0 && !line.linked_internal_transfer_line_id,
+  );
+
+  if (convertibleLines.length === 0) {
+    throw new Error("No approved lines are available for conversion to Internal Transfer.");
+  }
+
+  return {
+    request_date: new Date().toISOString().slice(0, 10),
+    source_location_id: DEFAULT_TRANSFER_SOURCE_LOCATION_ID,
+    destination_location_id: request.store_location_id,
+    requested_by_user_id: request.requested_by_user_id ?? request.approved_by_user_id ?? "",
+    approved_by_user_id: "",
+    scheduled_dispatch_date: request.request_date,
+    logistics_status: "draft",
+    priority: "normal",
+    notes: request.notes
+      ? `Converted from ${request.request_number}. ${request.notes}`
+      : `Converted from ${request.request_number}.`,
+    line_items: convertibleLines.map((line, index) => ({
+      id: buildTransferLineId(request.id, line.id, index),
+      raw_ingredient_id: line.raw_ingredient_id,
+      item_name: line.item_name,
+      base_unit: line.base_unit,
+      requested_quantity: line.approved_quantity ?? 0,
+      picked_quantity: 0,
+      received_quantity: 0,
+      shortage_notes: "",
+      discrepancy_notes: "",
+      line_notes: line.line_notes,
+      source_store_replenishment_request_line_id: line.id,
+    })),
+    assigned_to_user_id: "",
+    exception_code: "",
+    exception_notes: "",
+    source_store_replenishment_request_id: request.id,
+    source_store_replenishment_request_number: request.request_number,
+  };
+}
+
 export interface StoreParLevelRepository {
   list(): Promise<StoreParLevel[]>;
   getById(id: string): Promise<StoreParLevel | null>;
@@ -353,6 +458,7 @@ export interface StoreReplenishmentRequestRepository {
   approve(id: string, input: StoreReplenishmentRequestReviewInput, actorUserId: string): Promise<StoreReplenishmentRequest>;
   reject(id: string, input: StoreReplenishmentRequestReviewInput, actorUserId: string): Promise<StoreReplenishmentRequest>;
   cancel(id: string, actorUserId: string): Promise<StoreReplenishmentRequest>;
+  convertToInternalTransfer(id: string, actorUserId: string): Promise<StoreReplenishmentRequest>;
 }
 
 class LocalStoreParLevelRepository implements StoreParLevelRepository {
@@ -441,12 +547,17 @@ class LocalStoreReplenishmentRequestRepository implements StoreReplenishmentRequ
   async create(input: StoreReplenishmentRequestCreateInput) {
     const current = readStoreReplenishmentRequests();
     const timestamp = new Date().toISOString();
-    const created: StoreReplenishmentRequest = {
+    const created = normalizeStoreReplenishmentRequest({
       id: buildStoreReplenishmentRequestId(input.store_location_id),
       request_number: buildStoreReplenishmentRequestNumber(current),
       store_location_id: input.store_location_id,
       request_date: input.request_date,
       status: "draft",
+      conversion_status: "not_converted",
+      linked_internal_transfer_id: null,
+      linked_internal_transfer_number: null,
+      converted_at: null,
+      converted_by_user_id: null,
       source_store_stock_take_id: input.source_store_stock_take_id,
       requested_by_user_id: input.requested_by_user_id,
       review_notes: "",
@@ -458,7 +569,7 @@ class LocalStoreReplenishmentRequestRepository implements StoreReplenishmentRequ
       lines: buildReplenishmentRequestLines(input),
       created_at: timestamp,
       updated_at: timestamp,
-    };
+    });
 
     writeStoreReplenishmentRequests([created, ...current]);
     return created;
@@ -472,7 +583,7 @@ class LocalStoreReplenishmentRequestRepository implements StoreReplenishmentRequ
       throw new Error("Only draft Store Replenishment Requests can be edited");
     }
 
-    const updated: StoreReplenishmentRequest = {
+    const updated = normalizeStoreReplenishmentRequest({
       ...existing,
       store_location_id: input.store_location_id,
       request_date: input.request_date,
@@ -482,7 +593,7 @@ class LocalStoreReplenishmentRequestRepository implements StoreReplenishmentRequ
       status: input.status,
       lines: buildReplenishmentRequestLines(input, existing.id),
       updated_at: new Date().toISOString(),
-    };
+    });
 
     writeStoreReplenishmentRequests(current.map((item) => (item.id === id ? updated : item)));
     return updated;
@@ -514,12 +625,13 @@ class LocalStoreReplenishmentRequestRepository implements StoreReplenishmentRequ
       throw new Error("Only submitted Store Replenishment Requests can move into review");
     }
 
+    const timestamp = new Date().toISOString();
     const underReview: StoreReplenishmentRequest = {
       ...existing,
       status: "under_review",
       reviewed_by_user_id: actorUserId || null,
-      reviewed_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      reviewed_at: timestamp,
+      updated_at: timestamp,
     };
 
     writeStoreReplenishmentRequests(current.map((item) => (item.id === id ? underReview : item)));
@@ -535,12 +647,13 @@ class LocalStoreReplenishmentRequestRepository implements StoreReplenishmentRequ
     }
 
     const reviewed = stampReviewProgress(existing, input, actorUserId);
+    const timestamp = new Date().toISOString();
     const approved: StoreReplenishmentRequest = {
       ...reviewed,
       status: "approved",
       approved_by_user_id: actorUserId || null,
-      approved_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      approved_at: timestamp,
+      updated_at: timestamp,
     };
 
     writeStoreReplenishmentRequests(current.map((item) => (item.id === id ? approved : item)));
@@ -576,16 +689,63 @@ class LocalStoreReplenishmentRequestRepository implements StoreReplenishmentRequ
       throw new Error("Only submitted or under-review Store Replenishment Requests can be cancelled");
     }
 
+    const timestamp = new Date().toISOString();
     const cancelled: StoreReplenishmentRequest = {
       ...existing,
       status: "cancelled",
-      reviewed_by_user_id: existing.reviewed_by_user_id ?? (actorUserId || null),
-      reviewed_at: existing.reviewed_at ?? new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      reviewed_by_user_id: existing.reviewed_by_user_id || actorUserId || null,
+      reviewed_at: existing.reviewed_at || timestamp,
+      updated_at: timestamp,
     };
 
     writeStoreReplenishmentRequests(current.map((item) => (item.id === id ? cancelled : item)));
     return cancelled;
+  }
+
+  async convertToInternalTransfer(id: string, actorUserId: string) {
+    const current = readStoreReplenishmentRequests();
+    const existing = requireStoreReplenishmentRequest(current, id);
+
+    if (!canConvertStoreReplenishmentRequest(existing)) {
+      throw new Error(
+        "Only approved Store Replenishment Requests with approved quantities can be converted to Internal Transfer.",
+      );
+    }
+
+    const transferInput = buildConversionTransferInput(existing);
+    const createdTransfer = await internalTransferRepository.create(transferInput);
+    const timestamp = new Date().toISOString();
+    const transferLineMap = new Map(
+      createdTransfer.line_items
+        .filter((line) => line.source_store_replenishment_request_line_id)
+        .map((line) => [line.source_store_replenishment_request_line_id as string, line]),
+    );
+
+    const converted: StoreReplenishmentRequest = {
+      ...existing,
+      conversion_status: "converted",
+      linked_internal_transfer_id: createdTransfer.id,
+      linked_internal_transfer_number: createdTransfer.transfer_order_number,
+      converted_at: timestamp,
+      converted_by_user_id: actorUserId || null,
+      updated_at: timestamp,
+      lines: existing.lines.map((line) => {
+        const linkedTransferLine = transferLineMap.get(line.id);
+
+        if (!linkedTransferLine) {
+          return line;
+        }
+
+        return {
+          ...line,
+          linked_internal_transfer_line_id: linkedTransferLine.id,
+          converted_quantity: linkedTransferLine.requested_quantity,
+        };
+      }),
+    };
+
+    writeStoreReplenishmentRequests(current.map((item) => (item.id === id ? converted : item)));
+    return converted;
   }
 }
 

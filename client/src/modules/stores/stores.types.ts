@@ -1,6 +1,6 @@
 /*
  * File intent: define the approved Stores / Branch Operations domain models for par levels, stock takes, and replenishment requests.
- * Design reminder for this file: keep Stores records separate from Logistics and Internal Transfer, and limit replenishment requests to Stores-side demand capture and lifecycle only.
+ * Design reminder for this file: keep Stores records separate from Logistics and Internal Transfer, and limit replenishment requests to Stores-side demand capture and lifecycle only while exposing explicit handoff linkage to Logistics.
  */
 
 export type StoreParLevelStatus = "active" | "inactive";
@@ -12,6 +12,8 @@ export type StoreReplenishmentRequestStatus =
   | "approved"
   | "rejected"
   | "cancelled";
+
+export type StoreReplenishmentConversionStatus = "not_converted" | "converted";
 
 export type StoreParLevel = {
   id: string;
@@ -132,6 +134,8 @@ export type StoreReplenishmentRequestLine = {
   requested_quantity: number;
   approved_quantity: number | null;
   line_notes: string;
+  linked_internal_transfer_line_id: string | null;
+  converted_quantity: number;
 };
 
 export type StoreReplenishmentRequest = {
@@ -140,6 +144,11 @@ export type StoreReplenishmentRequest = {
   store_location_id: string;
   request_date: string;
   status: StoreReplenishmentRequestStatus;
+  conversion_status: StoreReplenishmentConversionStatus;
+  linked_internal_transfer_id: string | null;
+  linked_internal_transfer_number: string | null;
+  converted_at: string | null;
+  converted_by_user_id: string | null;
   source_store_stock_take_id: string | null;
   requested_by_user_id: string | null;
   review_notes: string;
@@ -245,6 +254,7 @@ export type StoreReplenishmentRequestSummary = {
   total_shortage_quantity: number;
   total_requested_quantity: number;
   total_approved_quantity: number;
+  total_converted_quantity: number;
 };
 
 export function calculateShortageQuantity(parQuantity: number | null, countedQuantity: number) {
@@ -300,6 +310,7 @@ export function summarizeStoreReplenishmentRequest(
       total_shortage_quantity: summary.total_shortage_quantity + line.shortage_quantity_snapshot,
       total_requested_quantity: summary.total_requested_quantity + line.requested_quantity,
       total_approved_quantity: summary.total_approved_quantity + (line.approved_quantity ?? 0),
+      total_converted_quantity: summary.total_converted_quantity + line.converted_quantity,
     }),
     {
       total_line_count: 0,
@@ -307,6 +318,7 @@ export function summarizeStoreReplenishmentRequest(
       total_shortage_quantity: 0,
       total_requested_quantity: 0,
       total_approved_quantity: 0,
+      total_converted_quantity: 0,
     },
   );
 }
@@ -325,4 +337,12 @@ export function canReviewStoreReplenishmentRequest(request: StoreReplenishmentRe
 
 export function canCancelStoreReplenishmentRequest(request: StoreReplenishmentRequest) {
   return request.status === "submitted" || request.status === "under_review";
+}
+
+export function canConvertStoreReplenishmentRequest(request: StoreReplenishmentRequest) {
+  if (request.status !== "approved" || request.conversion_status === "converted") {
+    return false;
+  }
+
+  return request.lines.some((line) => (line.approved_quantity ?? 0) > 0 && !line.linked_internal_transfer_line_id);
 }

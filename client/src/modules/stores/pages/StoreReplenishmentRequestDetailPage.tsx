@@ -1,6 +1,6 @@
 /*
  * File intent: implement Stores / Branch Operations replenishment request detail and lifecycle actions.
- * Design reminder for this file: keep replenishment requests as Stores demand records only, and do not introduce Internal Transfer execution behavior inside Stores.
+ * Design reminder for this file: keep replenishment requests as Stores demand records only, and expose Internal Transfer handoff as an explicit conversion action rather than embedding Logistics execution behavior inside Stores.
  */
 
 import { storesItems } from "@/app/navigation";
@@ -13,6 +13,7 @@ import {
 } from "@/modules/stores/stores.validation";
 import {
   canCancelStoreReplenishmentRequest,
+  canConvertStoreReplenishmentRequest,
   canReviewStoreReplenishmentRequest,
   canStartStoreReplenishmentRequestReview,
   isStoreReplenishmentRequestEditable,
@@ -169,6 +170,29 @@ export default function StoreReplenishmentRequestDetailPage() {
     }
   }
 
+  async function handleConvertToInternalTransfer() {
+    if (!item || !canConvertStoreReplenishmentRequest(item)) {
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const converted = await storeReplenishmentRequestRepository.convertToInternalTransfer(
+        item.id,
+        currentUser?.id ?? "",
+      );
+      setItem(converted);
+      toast.success(`Internal Transfer ${converted.linked_internal_transfer_number ?? "created"} generated from approved request`);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to convert Store Replenishment Request to Internal Transfer";
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   if (isLoading) {
     return <p>Loading Store Replenishment Request...</p>;
   }
@@ -182,6 +206,7 @@ export default function StoreReplenishmentRequestDetailPage() {
   const canStartReview = canStartStoreReplenishmentRequestReview(item);
   const canReview = canReviewStoreReplenishmentRequest(item);
   const canCancel = canCancelStoreReplenishmentRequest(item);
+  const canConvert = canConvertStoreReplenishmentRequest(item);
 
   return (
     <section>
@@ -189,7 +214,9 @@ export default function StoreReplenishmentRequestDetailPage() {
         <p>Stores / Branch Operations</p>
         <h1>{item.request_number}</h1>
         <p>
-          This page shows the Stores-side replenishment request as a demand record. Phase 2C adds Stores-only review and approval lifecycle controls, while keeping approval separate from Internal Transfer conversion and Logistics execution.
+          This page shows the Stores-side replenishment request as a demand record. Phase 3 adds an explicit handoff action that
+          converts approved demand into a new linked Internal Transfer, while keeping Stores demand records separate from
+          Logistics execution records.
         </p>
       </header>
 
@@ -237,6 +264,11 @@ export default function StoreReplenishmentRequestDetailPage() {
             {showReviewForm ? "Hide review form" : "Open review form"}
           </button>
         ) : null}
+        {canConvert ? (
+          <button type="button" onClick={handleConvertToInternalTransfer} disabled={isSubmitting}>
+            {isSubmitting ? "Converting..." : "Convert to Internal Transfer"}
+          </button>
+        ) : null}
       </p>
 
       <dl>
@@ -246,6 +278,8 @@ export default function StoreReplenishmentRequestDetailPage() {
         <dd>{item.request_date}</dd>
         <dt>Status</dt>
         <dd>{item.status}</dd>
+        <dt>Conversion Status</dt>
+        <dd>{item.conversion_status}</dd>
         <dt>Requested By User Id</dt>
         <dd>{item.requested_by_user_id ?? "-"}</dd>
         <dt>Source Store Stock Take Id</dt>
@@ -260,6 +294,22 @@ export default function StoreReplenishmentRequestDetailPage() {
         <dd>{item.approved_at ?? "-"}</dd>
         <dt>Review Notes</dt>
         <dd>{item.review_notes || "-"}</dd>
+        <dt>Linked Internal Transfer Id</dt>
+        <dd>{item.linked_internal_transfer_id ?? "-"}</dd>
+        <dt>Linked Internal Transfer Number</dt>
+        <dd>
+          {item.linked_internal_transfer_id && item.linked_internal_transfer_number ? (
+            <Link href={`/logistics/transfer-orders/${item.linked_internal_transfer_id}`}>
+              {item.linked_internal_transfer_number}
+            </Link>
+          ) : (
+            "-"
+          )}
+        </dd>
+        <dt>Converted At</dt>
+        <dd>{item.converted_at ?? "-"}</dd>
+        <dt>Converted By User Id</dt>
+        <dd>{item.converted_by_user_id ?? "-"}</dd>
         <dt>Line Count</dt>
         <dd>{summary.total_line_count}</dd>
         <dt>Shortage Line Count</dt>
@@ -270,6 +320,8 @@ export default function StoreReplenishmentRequestDetailPage() {
         <dd>{summary.total_requested_quantity}</dd>
         <dt>Total Approved Quantity</dt>
         <dd>{summary.total_approved_quantity}</dd>
+        <dt>Total Converted Quantity</dt>
+        <dd>{summary.total_converted_quantity}</dd>
         <dt>Notes</dt>
         <dd>{item.notes || "-"}</dd>
       </dl>
@@ -278,7 +330,8 @@ export default function StoreReplenishmentRequestDetailPage() {
         <section>
           <h2>Review / Approval</h2>
           <p>
-            Review approved quantities inside Stores only. This step records reviewer intent and approved demand, but does not create an Internal Transfer or trigger Logistics execution.
+            Review approved quantities inside Stores only. This step records reviewer intent and approved demand, but does not
+            create an Internal Transfer or trigger Logistics execution until the explicit conversion action is used.
           </p>
           <StoreReplenishmentRequestReviewForm
             defaultValues={createStoreReplenishmentRequestReviewFormValues(item)}
@@ -301,6 +354,8 @@ export default function StoreReplenishmentRequestDetailPage() {
             <th>Shortage Quantity</th>
             <th>Requested Quantity</th>
             <th>Approved Quantity</th>
+            <th>Converted Quantity</th>
+            <th>Linked Transfer Line</th>
             <th>Line Notes</th>
           </tr>
         </thead>
@@ -315,6 +370,8 @@ export default function StoreReplenishmentRequestDetailPage() {
               <td>{line.shortage_quantity_snapshot}</td>
               <td>{line.requested_quantity}</td>
               <td>{line.approved_quantity ?? "-"}</td>
+              <td>{line.converted_quantity}</td>
+              <td>{line.linked_internal_transfer_line_id ?? "-"}</td>
               <td>{line.line_notes || "-"}</td>
             </tr>
           ))}
