@@ -5,7 +5,13 @@
 
 export type StoreParLevelStatus = "active" | "inactive";
 export type StoreStockTakeStatus = "draft" | "submitted" | "finalized";
-export type StoreReplenishmentRequestStatus = "draft" | "submitted";
+export type StoreReplenishmentRequestStatus =
+  | "draft"
+  | "submitted"
+  | "under_review"
+  | "approved"
+  | "rejected"
+  | "cancelled";
 
 export type StoreParLevel = {
   id: string;
@@ -124,6 +130,7 @@ export type StoreReplenishmentRequestLine = {
   counted_quantity_snapshot: number | null;
   shortage_quantity_snapshot: number;
   requested_quantity: number;
+  approved_quantity: number | null;
   line_notes: string;
 };
 
@@ -135,6 +142,11 @@ export type StoreReplenishmentRequest = {
   status: StoreReplenishmentRequestStatus;
   source_store_stock_take_id: string | null;
   requested_by_user_id: string | null;
+  review_notes: string;
+  reviewed_by_user_id: string | null;
+  reviewed_at: string | null;
+  approved_by_user_id: string | null;
+  approved_at: string | null;
   notes: string;
   lines: StoreReplenishmentRequestLine[];
   created_at: string;
@@ -153,6 +165,7 @@ export type StoreReplenishmentRequestEntryLine = {
   counted_quantity_snapshot: number | null;
   shortage_quantity_snapshot: number;
   requested_quantity: number;
+  approved_quantity: number | null;
   line_notes: string;
 };
 
@@ -172,8 +185,18 @@ export type StoreReplenishmentRequestUpdateInput = {
   requested_by_user_id: string | null;
   source_store_stock_take_id: string | null;
   notes: string;
-  status: StoreReplenishmentRequestStatus;
+  status: Extract<StoreReplenishmentRequestStatus, "draft" | "submitted">;
   lines: StoreReplenishmentRequestEntryLine[];
+};
+
+export type StoreReplenishmentRequestReviewInputLine = {
+  id: string;
+  approved_quantity: number;
+};
+
+export type StoreReplenishmentRequestReviewInput = {
+  review_notes: string;
+  lines: StoreReplenishmentRequestReviewInputLine[];
 };
 
 export type StoreReplenishmentRequestFormLineValues = {
@@ -188,6 +211,7 @@ export type StoreReplenishmentRequestFormLineValues = {
   counted_quantity_snapshot: number | null;
   shortage_quantity_snapshot: number;
   requested_quantity: string;
+  approved_quantity: string;
   line_notes: string;
 };
 
@@ -201,11 +225,26 @@ export type StoreReplenishmentRequestFormValues = {
   lines: StoreReplenishmentRequestFormLineValues[];
 };
 
+export type StoreReplenishmentRequestReviewFormLineValues = {
+  id: string;
+  item_name: string;
+  base_unit: string;
+  requested_quantity: number;
+  approved_quantity: string;
+  line_notes: string;
+};
+
+export type StoreReplenishmentRequestReviewFormValues = {
+  review_notes: string;
+  lines: StoreReplenishmentRequestReviewFormLineValues[];
+};
+
 export type StoreReplenishmentRequestSummary = {
   total_line_count: number;
   shortage_line_count: number;
   total_shortage_quantity: number;
   total_requested_quantity: number;
+  total_approved_quantity: number;
 };
 
 export function calculateShortageQuantity(parQuantity: number | null, countedQuantity: number) {
@@ -260,16 +299,30 @@ export function summarizeStoreReplenishmentRequest(
       shortage_line_count: summary.shortage_line_count + (line.shortage_quantity_snapshot > 0 ? 1 : 0),
       total_shortage_quantity: summary.total_shortage_quantity + line.shortage_quantity_snapshot,
       total_requested_quantity: summary.total_requested_quantity + line.requested_quantity,
+      total_approved_quantity: summary.total_approved_quantity + (line.approved_quantity ?? 0),
     }),
     {
       total_line_count: 0,
       shortage_line_count: 0,
       total_shortage_quantity: 0,
       total_requested_quantity: 0,
+      total_approved_quantity: 0,
     },
   );
 }
 
 export function isStoreReplenishmentRequestEditable(request: StoreReplenishmentRequest) {
   return request.status === "draft";
+}
+
+export function canStartStoreReplenishmentRequestReview(request: StoreReplenishmentRequest) {
+  return request.status === "submitted";
+}
+
+export function canReviewStoreReplenishmentRequest(request: StoreReplenishmentRequest) {
+  return request.status === "under_review";
+}
+
+export function canCancelStoreReplenishmentRequest(request: StoreReplenishmentRequest) {
+  return request.status === "submitted" || request.status === "under_review";
 }

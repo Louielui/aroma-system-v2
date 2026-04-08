@@ -1,17 +1,21 @@
 /*
- * File intent: provide local-storage-backed repository abstractions for Stores / Branch Operations Phase 1 and Phase 2B.
- * Design reminder for this file: keep Stores records separate from Logistics and Internal Transfer, and keep replenishment request lifecycle limited to Stores-side demand capture, editing, and submission.
+ * File intent: provide local-storage-backed repository abstractions for Stores / Branch Operations Phase 2C.
+ * Design reminder for this file: keep Stores records separate from Logistics and Internal Transfer, and keep replenishment request lifecycle limited to Stores-side demand capture, review, and approval.
  */
 
 import {
   calculateOverageQuantity,
   calculateShortageQuantity,
+  canCancelStoreReplenishmentRequest,
+  canReviewStoreReplenishmentRequest,
+  canStartStoreReplenishmentRequestReview,
   isStoreReplenishmentRequestEditable,
   type StoreParLevel,
   type StoreParLevelUpsert,
   type StoreReplenishmentRequest,
   type StoreReplenishmentRequestCreateInput,
   type StoreReplenishmentRequestLine,
+  type StoreReplenishmentRequestReviewInput,
   type StoreReplenishmentRequestUpdateInput,
   type StoreStockTake,
   type StoreStockTakeCreateInput,
@@ -148,6 +152,7 @@ function buildReplenishmentRequestLines(
     counted_quantity_snapshot: line.counted_quantity_snapshot,
     shortage_quantity_snapshot: line.shortage_quantity_snapshot,
     requested_quantity: line.requested_quantity,
+    approved_quantity: line.approved_quantity ?? null,
     line_notes: line.line_notes,
   }));
 }
@@ -161,6 +166,11 @@ const seedStoreReplenishmentRequests: StoreReplenishmentRequest[] = [
     status: "draft",
     source_store_stock_take_id: "store-stock-take-downtown-2026-02-18",
     requested_by_user_id: null,
+    review_notes: "",
+    reviewed_by_user_id: null,
+    reviewed_at: null,
+    approved_by_user_id: null,
+    approved_at: null,
     notes: "Draft replenishment request created from Downtown shortage lines.",
     lines: [
       {
@@ -175,6 +185,7 @@ const seedStoreReplenishmentRequests: StoreReplenishmentRequest[] = [
         counted_quantity_snapshot: 7,
         shortage_quantity_snapshot: 5,
         requested_quantity: 5,
+        approved_quantity: null,
         line_notes: "Requested to replenish the full shortage amount.",
       },
     ],
@@ -287,6 +298,38 @@ function buildStoreReplenishmentRequestNumber(
   ).padStart(3, "0")}`;
 }
 
+function requireStoreReplenishmentRequest(
+  items: StoreReplenishmentRequest[],
+  id: string,
+) {
+  const existing = items.find((item) => item.id === id);
+
+  if (!existing) {
+    throw new Error("Store Replenishment Request not found");
+  }
+
+  return existing;
+}
+
+function stampReviewProgress(
+  request: StoreReplenishmentRequest,
+  reviewInput: StoreReplenishmentRequestReviewInput,
+  actorUserId: string,
+) {
+  const reviewLines = new Map(reviewInput.lines.map((line) => [line.id, line.approved_quantity]));
+
+  return {
+    ...request,
+    review_notes: reviewInput.review_notes,
+    reviewed_by_user_id: actorUserId || null,
+    reviewed_at: new Date().toISOString(),
+    lines: request.lines.map((line) => ({
+      ...line,
+      approved_quantity: reviewLines.get(line.id) ?? 0,
+    })),
+  };
+}
+
 export interface StoreParLevelRepository {
   list(): Promise<StoreParLevel[]>;
   getById(id: string): Promise<StoreParLevel | null>;
@@ -306,6 +349,10 @@ export interface StoreReplenishmentRequestRepository {
   create(input: StoreReplenishmentRequestCreateInput): Promise<StoreReplenishmentRequest>;
   update(id: string, input: StoreReplenishmentRequestUpdateInput): Promise<StoreReplenishmentRequest>;
   submit(id: string): Promise<StoreReplenishmentRequest>;
+  startReview(id: string, actorUserId: string): Promise<StoreReplenishmentRequest>;
+  approve(id: string, input: StoreReplenishmentRequestReviewInput, actorUserId: string): Promise<StoreReplenishmentRequest>;
+  reject(id: string, input: StoreReplenishmentRequestReviewInput, actorUserId: string): Promise<StoreReplenishmentRequest>;
+  cancel(id: string, actorUserId: string): Promise<StoreReplenishmentRequest>;
 }
 
 class LocalStoreParLevelRepository implements StoreParLevelRepository {
@@ -402,6 +449,11 @@ class LocalStoreReplenishmentRequestRepository implements StoreReplenishmentRequ
       status: "draft",
       source_store_stock_take_id: input.source_store_stock_take_id,
       requested_by_user_id: input.requested_by_user_id,
+      review_notes: "",
+      reviewed_by_user_id: null,
+      reviewed_at: null,
+      approved_by_user_id: null,
+      approved_at: null,
       notes: input.notes,
       lines: buildReplenishmentRequestLines(input),
       created_at: timestamp,
@@ -414,11 +466,7 @@ class LocalStoreReplenishmentRequestRepository implements StoreReplenishmentRequ
 
   async update(id: string, input: StoreReplenishmentRequestUpdateInput) {
     const current = readStoreReplenishmentRequests();
-    const existing = current.find((item) => item.id === id);
-
-    if (!existing) {
-      throw new Error("Store Replenishment Request not found");
-    }
+    const existing = requireStoreReplenishmentRequest(current, id);
 
     if (!isStoreReplenishmentRequestEditable(existing)) {
       throw new Error("Only draft Store Replenishment Requests can be edited");
@@ -442,11 +490,7 @@ class LocalStoreReplenishmentRequestRepository implements StoreReplenishmentRequ
 
   async submit(id: string) {
     const current = readStoreReplenishmentRequests();
-    const existing = current.find((item) => item.id === id);
-
-    if (!existing) {
-      throw new Error("Store Replenishment Request not found");
-    }
+    const existing = requireStoreReplenishmentRequest(current, id);
 
     if (!isStoreReplenishmentRequestEditable(existing)) {
       throw new Error("Only draft Store Replenishment Requests can be submitted");
@@ -460,6 +504,88 @@ class LocalStoreReplenishmentRequestRepository implements StoreReplenishmentRequ
 
     writeStoreReplenishmentRequests(current.map((item) => (item.id === id ? submitted : item)));
     return submitted;
+  }
+
+  async startReview(id: string, actorUserId: string) {
+    const current = readStoreReplenishmentRequests();
+    const existing = requireStoreReplenishmentRequest(current, id);
+
+    if (!canStartStoreReplenishmentRequestReview(existing)) {
+      throw new Error("Only submitted Store Replenishment Requests can move into review");
+    }
+
+    const underReview: StoreReplenishmentRequest = {
+      ...existing,
+      status: "under_review",
+      reviewed_by_user_id: actorUserId || null,
+      reviewed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    writeStoreReplenishmentRequests(current.map((item) => (item.id === id ? underReview : item)));
+    return underReview;
+  }
+
+  async approve(id: string, input: StoreReplenishmentRequestReviewInput, actorUserId: string) {
+    const current = readStoreReplenishmentRequests();
+    const existing = requireStoreReplenishmentRequest(current, id);
+
+    if (!canReviewStoreReplenishmentRequest(existing)) {
+      throw new Error("Only under-review Store Replenishment Requests can be approved");
+    }
+
+    const reviewed = stampReviewProgress(existing, input, actorUserId);
+    const approved: StoreReplenishmentRequest = {
+      ...reviewed,
+      status: "approved",
+      approved_by_user_id: actorUserId || null,
+      approved_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    writeStoreReplenishmentRequests(current.map((item) => (item.id === id ? approved : item)));
+    return approved;
+  }
+
+  async reject(id: string, input: StoreReplenishmentRequestReviewInput, actorUserId: string) {
+    const current = readStoreReplenishmentRequests();
+    const existing = requireStoreReplenishmentRequest(current, id);
+
+    if (!canReviewStoreReplenishmentRequest(existing)) {
+      throw new Error("Only under-review Store Replenishment Requests can be rejected");
+    }
+
+    const reviewed = stampReviewProgress(existing, input, actorUserId);
+    const rejected: StoreReplenishmentRequest = {
+      ...reviewed,
+      status: "rejected",
+      approved_by_user_id: null,
+      approved_at: null,
+      updated_at: new Date().toISOString(),
+    };
+
+    writeStoreReplenishmentRequests(current.map((item) => (item.id === id ? rejected : item)));
+    return rejected;
+  }
+
+  async cancel(id: string, actorUserId: string) {
+    const current = readStoreReplenishmentRequests();
+    const existing = requireStoreReplenishmentRequest(current, id);
+
+    if (!canCancelStoreReplenishmentRequest(existing)) {
+      throw new Error("Only submitted or under-review Store Replenishment Requests can be cancelled");
+    }
+
+    const cancelled: StoreReplenishmentRequest = {
+      ...existing,
+      status: "cancelled",
+      reviewed_by_user_id: existing.reviewed_by_user_id ?? (actorUserId || null),
+      reviewed_at: existing.reviewed_at ?? new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    writeStoreReplenishmentRequests(current.map((item) => (item.id === id ? cancelled : item)));
+    return cancelled;
   }
 }
 

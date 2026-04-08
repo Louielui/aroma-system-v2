@@ -12,6 +12,8 @@ import type {
   StoreReplenishmentRequestCreateInput,
   StoreReplenishmentRequestFormLineValues,
   StoreReplenishmentRequestFormValues,
+  StoreReplenishmentRequestReviewFormValues,
+  StoreReplenishmentRequestReviewInput,
   StoreReplenishmentRequestUpdateInput,
   StoreStockTake,
   StoreStockTakeCreateInput,
@@ -76,6 +78,7 @@ const storeReplenishmentRequestLineSchema = z.object({
   counted_quantity_snapshot: z.number().nullable(),
   shortage_quantity_snapshot: z.number().min(0, "Shortage quantity cannot be negative"),
   requested_quantity: numericString,
+  approved_quantity: optionalNumericString,
   line_notes: z.string(),
 });
 
@@ -85,7 +88,7 @@ export const storeReplenishmentRequestFormSchema = z.object({
   requested_by_user_id: z.string(),
   source_store_stock_take_id: z.string(),
   notes: z.string(),
-  status: z.enum(["draft", "submitted"]),
+  status: z.enum(["draft", "submitted", "under_review", "approved", "rejected", "cancelled"]),
   lines: z
     .array(storeReplenishmentRequestLineSchema)
     .min(1, "At least one replenishment line is required")
@@ -93,6 +96,25 @@ export const storeReplenishmentRequestFormSchema = z.object({
       (lines) => lines.some((line) => Number(line.requested_quantity) > 0),
       "At least one requested quantity must be greater than zero",
     ),
+});
+
+const storeReplenishmentRequestReviewLineSchema = z
+  .object({
+    id: z.string().trim().min(1, "Line id is required"),
+    item_name: z.string().trim().min(1, "Item name is required"),
+    base_unit: z.string().trim().min(1, "Base unit is required"),
+    requested_quantity: z.number().min(0, "Requested quantity cannot be negative"),
+    approved_quantity: numericString,
+    line_notes: z.string(),
+  })
+  .refine(
+    (line) => Number(line.approved_quantity) <= line.requested_quantity,
+    "Approved quantity cannot exceed requested quantity",
+  );
+
+export const storeReplenishmentRequestReviewFormSchema = z.object({
+  review_notes: z.string(),
+  lines: z.array(storeReplenishmentRequestReviewLineSchema).min(1, "At least one review line is required"),
 });
 
 export function createDefaultStoreParLevelFormValues(): StoreParLevelFormValues {
@@ -222,6 +244,7 @@ export function createStoreReplenishmentRequestFormValues(
         counted_quantity_snapshot: line.counted_quantity_snapshot,
         shortage_quantity_snapshot: line.shortage_quantity_snapshot,
         requested_quantity: String(line.requested_quantity),
+        approved_quantity: line.approved_quantity === null || line.approved_quantity === undefined ? "" : String(line.approved_quantity),
         line_notes: line.line_notes,
       })) ??
       stockTake.lines
@@ -238,6 +261,7 @@ export function createStoreReplenishmentRequestFormValues(
           counted_quantity_snapshot: line.counted_quantity,
           shortage_quantity_snapshot: line.shortage_quantity,
           requested_quantity: String(line.shortage_quantity),
+          approved_quantity: "",
           line_notes: line.line_notes,
         })),
   };
@@ -265,6 +289,23 @@ export function storeReplenishmentRequestToFormValues(
       counted_quantity_snapshot: line.counted_quantity_snapshot,
       shortage_quantity_snapshot: line.shortage_quantity_snapshot,
       requested_quantity: String(line.requested_quantity),
+      approved_quantity: line.approved_quantity === null || line.approved_quantity === undefined ? "" : String(line.approved_quantity),
+      line_notes: line.line_notes,
+    })),
+  };
+}
+
+export function createStoreReplenishmentRequestReviewFormValues(
+  request: StoreReplenishmentRequest,
+): StoreReplenishmentRequestReviewFormValues {
+  return {
+    review_notes: request.review_notes,
+    lines: request.lines.map((line) => ({
+      id: line.id,
+      item_name: line.item_name,
+      base_unit: line.base_unit,
+      requested_quantity: line.requested_quantity,
+      approved_quantity: String(line.approved_quantity ?? line.requested_quantity),
       line_notes: line.line_notes,
     })),
   };
@@ -281,7 +322,7 @@ function parseStoreReplenishmentRequestFormValues(
     requested_by_user_id: parsed.requested_by_user_id.trim() === "" ? null : parsed.requested_by_user_id,
     source_store_stock_take_id: parsed.source_store_stock_take_id.trim() === "" ? null : parsed.source_store_stock_take_id,
     notes: parsed.notes,
-    status: parsed.status,
+    status: parsed.status === "draft" ? "draft" : "submitted",
     lines: parsed.lines
       .map((line) => ({
         id: line.id.trim() === "" ? null : line.id,
@@ -296,6 +337,7 @@ function parseStoreReplenishmentRequestFormValues(
         counted_quantity_snapshot: line.counted_quantity_snapshot,
         shortage_quantity_snapshot: line.shortage_quantity_snapshot,
         requested_quantity: Number(line.requested_quantity),
+        approved_quantity: line.approved_quantity.trim() === "" ? null : Number(line.approved_quantity),
         line_notes: line.line_notes,
       }))
       .filter((line) => line.requested_quantity > 0),
@@ -317,4 +359,18 @@ export function parseStoreReplenishmentRequestUpdateFormValues(
   values: StoreReplenishmentRequestFormValues,
 ): StoreReplenishmentRequestUpdateInput {
   return parseStoreReplenishmentRequestFormValues(values);
+}
+
+export function parseStoreReplenishmentRequestReviewFormValues(
+  values: StoreReplenishmentRequestReviewFormValues,
+): StoreReplenishmentRequestReviewInput {
+  const parsed = storeReplenishmentRequestReviewFormSchema.parse(values);
+
+  return {
+    review_notes: parsed.review_notes,
+    lines: parsed.lines.map((line) => ({
+      id: line.id,
+      approved_quantity: Number(line.approved_quantity),
+    })),
+  };
 }

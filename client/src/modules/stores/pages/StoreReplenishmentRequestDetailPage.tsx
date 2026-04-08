@@ -1,15 +1,24 @@
 /*
- * File intent: implement Stores / Branch Operations replenishment request detail page.
- * Design reminder for this file: keep replenishment requests as Stores demand records only, and do not introduce approval, conversion, or Internal Transfer execution behavior.
+ * File intent: implement Stores / Branch Operations replenishment request detail and lifecycle actions.
+ * Design reminder for this file: keep replenishment requests as Stores demand records only, and do not introduce Internal Transfer execution behavior inside Stores.
  */
 
 import { storesItems } from "@/app/navigation";
 import { useAccessControl } from "@/contexts/AccessControlContext";
+import StoreReplenishmentRequestReviewForm from "@/modules/stores/components/StoreReplenishmentRequestReviewForm";
 import { storeReplenishmentRequestRepository } from "@/modules/stores/stores.repository";
 import {
+  createStoreReplenishmentRequestReviewFormValues,
+  parseStoreReplenishmentRequestReviewFormValues,
+} from "@/modules/stores/stores.validation";
+import {
+  canCancelStoreReplenishmentRequest,
+  canReviewStoreReplenishmentRequest,
+  canStartStoreReplenishmentRequestReview,
   isStoreReplenishmentRequestEditable,
   summarizeStoreReplenishmentRequest,
   type StoreReplenishmentRequest,
+  type StoreReplenishmentRequestReviewFormValues,
 } from "@/modules/stores/stores.types";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -17,13 +26,14 @@ import { Link, useLocation, useRoute } from "wouter";
 
 export default function StoreReplenishmentRequestDetailPage() {
   const [, navigate] = useLocation();
-  const { isAllowedLocation } = useAccessControl();
+  const { currentUser, isAllowedLocation } = useAccessControl();
   const [matches, params] = useRoute<{ storeReplenishmentRequestId: string }>(
     "/stores/replenishment-requests/:storeReplenishmentRequestId",
   );
   const [item, setItem] = useState<StoreReplenishmentRequest | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showReviewForm, setShowReviewForm] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -46,6 +56,7 @@ export default function StoreReplenishmentRequestDetailPage() {
       }
 
       setItem(nextItem);
+      setShowReviewForm(nextItem.status === "under_review");
       setIsLoading(false);
     }
 
@@ -66,9 +77,92 @@ export default function StoreReplenishmentRequestDetailPage() {
     try {
       const submitted = await storeReplenishmentRequestRepository.submit(item.id);
       setItem(submitted);
+      setShowReviewForm(false);
       toast.success(`Store replenishment request ${submitted.request_number} submitted`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to submit Store Replenishment Request";
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleStartReview() {
+    if (!item || !canStartStoreReplenishmentRequestReview(item)) {
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const underReview = await storeReplenishmentRequestRepository.startReview(item.id, currentUser?.id ?? "");
+      setItem(underReview);
+      setShowReviewForm(true);
+      toast.success(`Store replenishment request ${underReview.request_number} moved to review`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to start review";
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleApprove(values: StoreReplenishmentRequestReviewFormValues) {
+    if (!item || !canReviewStoreReplenishmentRequest(item)) {
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const payload = parseStoreReplenishmentRequestReviewFormValues(values);
+      const approved = await storeReplenishmentRequestRepository.approve(item.id, payload, currentUser?.id ?? "");
+      setItem(approved);
+      setShowReviewForm(false);
+      toast.success(`Store replenishment request ${approved.request_number} approved`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to approve Store Replenishment Request";
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleReject(values: StoreReplenishmentRequestReviewFormValues) {
+    if (!item || !canReviewStoreReplenishmentRequest(item)) {
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const payload = parseStoreReplenishmentRequestReviewFormValues(values);
+      const rejected = await storeReplenishmentRequestRepository.reject(item.id, payload, currentUser?.id ?? "");
+      setItem(rejected);
+      setShowReviewForm(false);
+      toast.success(`Store replenishment request ${rejected.request_number} rejected`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to reject Store Replenishment Request";
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleCancelRequest() {
+    if (!item || !canCancelStoreReplenishmentRequest(item)) {
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const cancelled = await storeReplenishmentRequestRepository.cancel(item.id, currentUser?.id ?? "");
+      setItem(cancelled);
+      setShowReviewForm(false);
+      toast.success(`Store replenishment request ${cancelled.request_number} cancelled`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to cancel Store Replenishment Request";
       toast.error(message);
     } finally {
       setIsSubmitting(false);
@@ -85,6 +179,9 @@ export default function StoreReplenishmentRequestDetailPage() {
 
   const summary = summarizeStoreReplenishmentRequest(item.lines);
   const isEditable = isStoreReplenishmentRequestEditable(item);
+  const canStartReview = canStartStoreReplenishmentRequestReview(item);
+  const canReview = canReviewStoreReplenishmentRequest(item);
+  const canCancel = canCancelStoreReplenishmentRequest(item);
 
   return (
     <section>
@@ -92,7 +189,7 @@ export default function StoreReplenishmentRequestDetailPage() {
         <p>Stores / Branch Operations</p>
         <h1>{item.request_number}</h1>
         <p>
-          This page shows the Stores-side replenishment request as a demand record. Phase 2B supports draft and submitted lifecycle only, without approval, conversion, or Logistics execution linkage.
+          This page shows the Stores-side replenishment request as a demand record. Phase 2C adds Stores-only review and approval lifecycle controls, while keeping approval separate from Internal Transfer conversion and Logistics execution.
         </p>
       </header>
 
@@ -111,16 +208,36 @@ export default function StoreReplenishmentRequestDetailPage() {
         <Link href="/stores/replenishment-requests">Back to Store Replenishment Requests</Link>
       </p>
 
-      {isEditable ? (
-        <p>
-          <Link href={`/stores/replenishment-requests/${item.id}/edit`}>Edit draft request</Link>{" "}
-          <button type="button" onClick={handleSubmitRequest} disabled={isSubmitting}>
-            {isSubmitting ? "Submitting..." : "Submit request"}
+      <p>
+        {isEditable ? (
+          <>
+            <Link href={`/stores/replenishment-requests/${item.id}/edit`}>Edit draft request</Link>{" "}
+            <button type="button" onClick={handleSubmitRequest} disabled={isSubmitting}>
+              {isSubmitting ? "Submitting..." : "Submit request"}
+            </button>
+          </>
+        ) : null}
+        {canStartReview ? (
+          <button type="button" onClick={handleStartReview} disabled={isSubmitting}>
+            {isSubmitting ? "Starting review..." : "Start review"}
           </button>
-        </p>
-      ) : (
-        <p>This request has been submitted and is no longer editable in Stores Phase 2B.</p>
-      )}
+        ) : null}
+        {canCancel ? (
+          <button type="button" onClick={handleCancelRequest} disabled={isSubmitting}>
+            {isSubmitting ? "Cancelling..." : "Cancel request"}
+          </button>
+        ) : null}
+        {canReview ? (
+          <button
+            type="button"
+            onClick={() => {
+              setShowReviewForm((current) => !current);
+            }}
+          >
+            {showReviewForm ? "Hide review form" : "Open review form"}
+          </button>
+        ) : null}
+      </p>
 
       <dl>
         <dt>Store Location</dt>
@@ -133,6 +250,16 @@ export default function StoreReplenishmentRequestDetailPage() {
         <dd>{item.requested_by_user_id ?? "-"}</dd>
         <dt>Source Store Stock Take Id</dt>
         <dd>{item.source_store_stock_take_id ?? "-"}</dd>
+        <dt>Reviewed By User Id</dt>
+        <dd>{item.reviewed_by_user_id ?? "-"}</dd>
+        <dt>Reviewed At</dt>
+        <dd>{item.reviewed_at ?? "-"}</dd>
+        <dt>Approved By User Id</dt>
+        <dd>{item.approved_by_user_id ?? "-"}</dd>
+        <dt>Approved At</dt>
+        <dd>{item.approved_at ?? "-"}</dd>
+        <dt>Review Notes</dt>
+        <dd>{item.review_notes || "-"}</dd>
         <dt>Line Count</dt>
         <dd>{summary.total_line_count}</dd>
         <dt>Shortage Line Count</dt>
@@ -141,9 +268,27 @@ export default function StoreReplenishmentRequestDetailPage() {
         <dd>{summary.total_shortage_quantity}</dd>
         <dt>Total Requested Quantity</dt>
         <dd>{summary.total_requested_quantity}</dd>
+        <dt>Total Approved Quantity</dt>
+        <dd>{summary.total_approved_quantity}</dd>
         <dt>Notes</dt>
         <dd>{item.notes || "-"}</dd>
       </dl>
+
+      {canReview && showReviewForm ? (
+        <section>
+          <h2>Review / Approval</h2>
+          <p>
+            Review approved quantities inside Stores only. This step records reviewer intent and approved demand, but does not create an Internal Transfer or trigger Logistics execution.
+          </p>
+          <StoreReplenishmentRequestReviewForm
+            defaultValues={createStoreReplenishmentRequestReviewFormValues(item)}
+            approveLabel="Approve Store Replenishment Request"
+            rejectLabel="Reject Store Replenishment Request"
+            onApprove={handleApprove}
+            onReject={handleReject}
+          />
+        </section>
+      ) : null}
 
       <table>
         <thead>
@@ -155,6 +300,7 @@ export default function StoreReplenishmentRequestDetailPage() {
             <th>Counted Quantity</th>
             <th>Shortage Quantity</th>
             <th>Requested Quantity</th>
+            <th>Approved Quantity</th>
             <th>Line Notes</th>
           </tr>
         </thead>
@@ -168,6 +314,7 @@ export default function StoreReplenishmentRequestDetailPage() {
               <td>{line.counted_quantity_snapshot ?? "-"}</td>
               <td>{line.shortage_quantity_snapshot}</td>
               <td>{line.requested_quantity}</td>
+              <td>{line.approved_quantity ?? "-"}</td>
               <td>{line.line_notes || "-"}</td>
             </tr>
           ))}
