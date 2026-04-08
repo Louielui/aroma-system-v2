@@ -1,6 +1,6 @@
 /**
  * File intent: provide an API-ready repository abstraction for the Logistics Internal Transfer flow.
- * Design reminder for this file: keep Internal Transfer execution separate from Stores demand records and limit Phase 4A to the picking stage only.
+ * Design reminder for this file: keep Internal Transfer execution separate from Stores demand records and extend lifecycle rules in explicit Logistics-owned phases only.
  */
 
 import type {
@@ -11,6 +11,7 @@ import type {
 import {
   canEditInternalTransferStatus,
   getNextInternalTransferStatuses,
+  isInternalTransferDispatchLocked,
 } from "@/modules/logistics/logistics-status.types";
 import type { SharedLogisticsStatus } from "@/modules/logistics/logistics-status.types";
 
@@ -46,6 +47,7 @@ const seedInternalTransfers: InternalTransfer[] = [
     assigned_to_user_id: "person-inventory-staff-maya",
     picked_at: "",
     dispatched_at: "",
+    dispatched_by_user_id: "",
     received_at: "",
     completed_at: "",
     exception_code: "",
@@ -82,12 +84,50 @@ const seedInternalTransfers: InternalTransfer[] = [
     assigned_to_user_id: "person-inventory-staff-maya",
     picked_at: new Date("2026-04-08T11:00:00.000Z").toISOString(),
     dispatched_at: "",
+    dispatched_by_user_id: "",
     received_at: "",
     completed_at: "",
     exception_code: "",
     exception_notes: "",
     created_at: new Date("2026-04-08T09:00:00.000Z").toISOString(),
     updated_at: new Date("2026-04-08T11:00:00.000Z").toISOString(),
+  },
+  {
+    id: "internal-transfer-downtown-003",
+    transfer_order_number: "TO-1003",
+    request_date: "2026-04-08",
+    source_location_id: "Central Kitchen",
+    destination_location_id: "Downtown",
+    requested_by_user_id: "person-kitchen-manager-noah",
+    approved_by_user_id: "",
+    scheduled_dispatch_date: "2026-04-08",
+    logistics_status: "dispatched",
+    priority: "scheduled",
+    notes: "Picked quantities are locked after dispatch for transport handoff.",
+    line_items: [
+      {
+        id: "raw-ingredient-rice-1",
+        raw_ingredient_id: "raw-ingredient-rice",
+        item_name: "Rice",
+        base_unit: "kg",
+        requested_quantity: 20,
+        picked_quantity: 18,
+        received_quantity: 0,
+        shortage_notes: "",
+        discrepancy_notes: "",
+        line_notes: "Dispatch with dry goods pallet.",
+      },
+    ],
+    assigned_to_user_id: "person-inventory-staff-maya",
+    picked_at: new Date("2026-04-08T10:15:00.000Z").toISOString(),
+    dispatched_at: new Date("2026-04-08T10:45:00.000Z").toISOString(),
+    dispatched_by_user_id: "person-logistics-lead-ava",
+    received_at: "",
+    completed_at: "",
+    exception_code: "",
+    exception_notes: "",
+    created_at: new Date("2026-04-08T09:30:00.000Z").toISOString(),
+    updated_at: new Date("2026-04-08T10:45:00.000Z").toISOString(),
   },
 ];
 
@@ -114,6 +154,7 @@ function normalizeInternalTransfer(input: InternalTransfer): InternalTransfer {
     ...input,
     assigned_to_user_id: input.assigned_to_user_id ?? "",
     line_items: normalizeLineItems(input.line_items),
+    dispatched_by_user_id: input.dispatched_by_user_id ?? "",
     exception_code: input.exception_code ?? "",
     exception_notes: input.exception_notes ?? "",
   };
@@ -186,6 +227,10 @@ function validateInternalTransferLineProgress(internalTransfer: InternalTransfer
   }
 }
 
+function hasAnyPickedQuantity(internalTransfer: InternalTransfer) {
+  return internalTransfer.line_items.some((lineItem) => lineItem.picked_quantity > 0);
+}
+
 function validateTransitionRequirements(internalTransfer: InternalTransfer, nextStatus: SharedLogisticsStatus) {
   validateInternalTransferLineProgress(internalTransfer);
 
@@ -196,6 +241,12 @@ function validateTransitionRequirements(internalTransfer: InternalTransfer, next
 
     if (internalTransfer.line_items.length < 1) {
       throw new Error("At least one line item is required before starting picking.");
+    }
+  }
+
+  if (nextStatus === "dispatched") {
+    if (!hasAnyPickedQuantity(internalTransfer)) {
+      throw new Error("At least one line must have picked quantity greater than 0 before dispatch.");
     }
   }
 }
@@ -215,6 +266,12 @@ function applyStatusTransition(
     approved_by_user_id:
       nextStatus === "picking" ? actorUserId || internalTransfer.approved_by_user_id : internalTransfer.approved_by_user_id,
     picked_at: nextStatus === "picking" && !internalTransfer.picked_at ? timestamp : internalTransfer.picked_at,
+    dispatched_at:
+      nextStatus === "dispatched" && !internalTransfer.dispatched_at ? timestamp : internalTransfer.dispatched_at,
+    dispatched_by_user_id:
+      nextStatus === "dispatched"
+        ? actorUserId || internalTransfer.dispatched_by_user_id || ""
+        : internalTransfer.dispatched_by_user_id || "",
     updated_at: timestamp,
   };
 }
@@ -246,6 +303,7 @@ class LocalInternalTransferRepository implements InternalTransferRepository {
       transfer_order_number: "new",
       picked_at: "",
       dispatched_at: "",
+      dispatched_by_user_id: input.dispatched_by_user_id ?? "",
       received_at: "",
       completed_at: "",
       created_at: timestamp,
@@ -256,6 +314,14 @@ class LocalInternalTransferRepository implements InternalTransferRepository {
 
     if (normalizedInput.logistics_status === "picking") {
       validateTransitionRequirements(normalizedInput, "picking");
+    }
+
+    if (normalizedInput.logistics_status === "dispatched") {
+      validateTransitionRequirements(normalizedInput, "dispatched");
+    }
+
+    if (normalizedInput.logistics_status === "in_transit" && !normalizedInput.dispatched_at) {
+      throw new Error("Internal Transfer cannot start in transit without being dispatched first.");
     }
 
     const internalTransfer: InternalTransfer = {
@@ -283,6 +349,10 @@ class LocalInternalTransferRepository implements InternalTransferRepository {
       throw new Error("This Internal Transfer cannot be edited in its current lifecycle state.");
     }
 
+    if (isInternalTransferDispatchLocked(existing.logistics_status)) {
+      throw new Error("Picked quantities are locked after dispatch.");
+    }
+
     const updated: InternalTransfer = normalizeInternalTransfer({
       ...existing,
       ...input,
@@ -291,6 +361,7 @@ class LocalInternalTransferRepository implements InternalTransferRepository {
       logistics_status: input.logistics_status ?? existing.logistics_status,
       picked_at: existing.picked_at,
       dispatched_at: existing.dispatched_at,
+      dispatched_by_user_id: existing.dispatched_by_user_id ?? "",
       received_at: existing.received_at,
       completed_at: existing.completed_at,
       created_at: existing.created_at,

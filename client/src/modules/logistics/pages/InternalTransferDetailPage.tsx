@@ -1,6 +1,6 @@
 /**
- * File intent: render the Logistics Internal Transfer detail page for the Phase 4A picking lifecycle.
- * Design reminder for this file: keep execution controls explicit, picking-only, and fully separated from Stores demand records.
+ * File intent: render the Logistics Internal Transfer detail page for the Phase 4B dispatch and in-transit lifecycle.
+ * Design reminder for this file: keep execution controls explicit, preserve the separation from Stores demand records, and expose only Logistics-owned lifecycle actions.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -12,6 +12,7 @@ import {
   canManageInternalTransferFulfillment,
   canManageInternalTransferHeader,
   getNextInternalTransferStatuses,
+  isInternalTransferDispatchLocked,
   sharedLogisticsStatusLabels,
 } from "@/modules/logistics/logistics-status.types";
 
@@ -51,9 +52,23 @@ function toUpsertPayload(internalTransfer: InternalTransfer): InternalTransferUp
     assigned_to_user_id: internalTransfer.assigned_to_user_id,
     exception_code: internalTransfer.exception_code,
     exception_notes: internalTransfer.exception_notes,
+    dispatched_by_user_id: internalTransfer.dispatched_by_user_id ?? "",
     source_store_replenishment_request_id: internalTransfer.source_store_replenishment_request_id ?? null,
     source_store_replenishment_request_number: internalTransfer.source_store_replenishment_request_number ?? null,
   };
+}
+
+function getTransitionButtonLabel(status: InternalTransfer["logistics_status"]) {
+  switch (status) {
+    case "picking":
+      return "Start Picking";
+    case "dispatched":
+      return "Dispatch Transfer";
+    case "in_transit":
+      return "Mark In Transit";
+    default:
+      return `Move to ${sharedLogisticsStatusLabels[status]}`;
+  }
 }
 
 export default function InternalTransferDetailPage() {
@@ -63,6 +78,7 @@ export default function InternalTransferDetailPage() {
   const [error, setError] = useState("");
   const [internalTransfer, setInternalTransfer] = useState<InternalTransfer | null>(null);
   const [isSavingPicking, setIsSavingPicking] = useState(false);
+  const [isTransitioning, setIsTransitioning] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -112,6 +128,7 @@ export default function InternalTransferDetailPage() {
 
     try {
       setError("");
+      setIsTransitioning(true);
       const updated = await internalTransferRepository.transitionStatus(
         internalTransfer.id,
         nextStatus,
@@ -120,6 +137,8 @@ export default function InternalTransferDetailPage() {
       setInternalTransfer(updated);
     } catch (transitionError) {
       setError(transitionError instanceof Error ? transitionError.message : "Unable to update transfer status.");
+    } finally {
+      setIsTransitioning(false);
     }
   }
 
@@ -192,6 +211,7 @@ export default function InternalTransferDetailPage() {
   const requestedTotal = sumLineValues(internalTransfer, "requested_quantity");
   const pickedTotal = sumLineValues(internalTransfer, "picked_quantity");
   const canEditPicking = canManageInternalTransferFulfillment(internalTransfer.logistics_status);
+  const isDispatchLocked = isInternalTransferDispatchLocked(internalTransfer.logistics_status);
   const linkedStoresRequest = internalTransfer.source_store_replenishment_request_number;
 
   return (
@@ -199,7 +219,7 @@ export default function InternalTransferDetailPage() {
       <header>
         <p>Logistics</p>
         <h1>{internalTransfer.transfer_order_number}</h1>
-        <p>Internal Transfer execution is now extended into the Phase 4A picking stage only.</p>
+        <p>Internal Transfer execution now covers picking, dispatch, and in-transit progress within Logistics only.</p>
       </header>
 
       <p>
@@ -215,7 +235,9 @@ export default function InternalTransferDetailPage() {
         <tbody>
           <tr>
             <th>Status</th>
-            <td>{sharedLogisticsStatusLabels[internalTransfer.logistics_status]}</td>
+            <td>
+              <strong>{sharedLogisticsStatusLabels[internalTransfer.logistics_status]}</strong>
+            </td>
           </tr>
           <tr>
             <th>Source</th>
@@ -244,6 +266,14 @@ export default function InternalTransferDetailPage() {
           <tr>
             <th>Picking started at</th>
             <td>{internalTransfer.picked_at || "—"}</td>
+          </tr>
+          <tr>
+            <th>Dispatched at</th>
+            <td>{internalTransfer.dispatched_at || "—"}</td>
+          </tr>
+          <tr>
+            <th>Dispatched by</th>
+            <td>{internalTransfer.dispatched_by_user_id || "—"}</td>
           </tr>
           <tr>
             <th>Linked Stores request</th>
@@ -301,7 +331,10 @@ export default function InternalTransferDetailPage() {
                       onChange={(event) => updatePickedQuantity(lineItem.id, event.target.value)}
                     />
                   ) : (
-                    lineItem.picked_quantity
+                    <span>
+                      {lineItem.picked_quantity}
+                      {isDispatchLocked ? " (locked)" : ""}
+                    </span>
                   )}
                 </td>
                 <td>{lineItem.line_notes || "—"}</td>
@@ -322,23 +355,24 @@ export default function InternalTransferDetailPage() {
       <section>
         <h2>Lifecycle / Status Flow</h2>
         <p>
-          Phase 4A is limited to the picking stage. Internal Transfer remains a Logistics execution object, and this page does
-          not push execution state back into Stores.
+          Phase 4B extends the Logistics execution object from picking into dispatch and in-transit handling without
+          changing Stores data or mirroring execution state back into Stores.
         </p>
         <p>
-          Picking can begin only when the transfer is assigned and has at least one line item. Dispatch, in-transit handling,
-          receiving, discrepancy workflows, and inventory integration remain intentionally out of scope.
+          Dispatch is allowed only after picking has started and at least one line has a picked quantity greater than 0.
+          Once dispatched, picked quantities become read-only. Receiving, discrepancy handling, and inventory integration
+          remain intentionally out of scope.
         </p>
         {nextStatuses.length > 0 ? (
           <p>
             {nextStatuses.map((status) => (
-              <button key={status} type="button" onClick={() => handleTransition(status)}>
-                {status === "picking" ? "Start Picking" : `Move to ${sharedLogisticsStatusLabels[status]}`}
+              <button key={status} type="button" onClick={() => handleTransition(status)} disabled={isTransitioning}>
+                {isTransitioning ? "Updating..." : getTransitionButtonLabel(status)}
               </button>
             ))}
           </p>
         ) : (
-          <p>No further lifecycle transition is available for this transfer order in Phase 4A.</p>
+          <p>No further lifecycle transition is available for this transfer order in Phase 4B.</p>
         )}
       </section>
     </section>

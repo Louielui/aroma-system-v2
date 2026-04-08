@@ -1,6 +1,6 @@
-/*
- * File intent: define the Logistics Internal Transfer domain model and related form types for Phase 3 handoff.
- * Design reminder for this file: keep Internal Transfer separate from Stores demand records while allowing explicit linkage back to the originating Stores replenishment request.
+/**
+ * File intent: define the Logistics Internal Transfer domain model and related form types for the execution lifecycle.
+ * Design reminder for this file: keep Internal Transfer separate from Stores demand records while extending Logistics-owned execution states in controlled phases.
  */
 
 import type {
@@ -41,6 +41,7 @@ export type InternalTransfer = {
   assigned_to_user_id: string;
   picked_at: string;
   dispatched_at: string;
+  dispatched_by_user_id?: string;
   received_at: string;
   completed_at: string;
   exception_code: LogisticsExceptionCode;

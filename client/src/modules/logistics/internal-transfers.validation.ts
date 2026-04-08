@@ -1,6 +1,6 @@
 /**
  * File intent: validate and convert Internal Transfer form values into the Logistics Internal Transfer model.
- * Design reminder for this file: keep draft preparation separate from the picking execution stage while enforcing safe defaults for picked quantities.
+ * Design reminder for this file: keep draft preparation separate from execution stages while enforcing safe picking defaults and immutable dispatch metadata handling.
  */
 
 import { z } from "zod";
@@ -25,7 +25,10 @@ const nonNegativeNumericString = (label: string) =>
   z
     .string()
     .trim()
-    .refine((value) => value !== "" && !Number.isNaN(Number(value)) && Number(value) >= 0, `${label} must be 0 or greater`);
+    .refine(
+      (value) => value !== "" && !Number.isNaN(Number(value)) && Number(value) >= 0,
+      `${label} must be 0 or greater`,
+    );
 
 const internalTransferLineItemFormSchema = z
   .object({
@@ -131,7 +134,16 @@ export function internalTransferToFormValues(transfer: InternalTransfer): Intern
 export function parseInternalTransferFormValues(
   values: InternalTransferFormValues,
   rawIngredients: RawIngredient[],
-  defaults?: Partial<Pick<InternalTransferUpsert, "logistics_status" | "approved_by_user_id" | "exception_code" | "exception_notes">>,
+  defaults?: Partial<
+    Pick<
+      InternalTransferUpsert,
+      | "logistics_status"
+      | "approved_by_user_id"
+      | "exception_code"
+      | "exception_notes"
+      | "dispatched_by_user_id"
+    >
+  >,
 ): InternalTransferUpsert {
   const validated = internalTransferFormSchema.parse(values);
   const rawIngredientMap = new Map(rawIngredients.map((rawIngredient) => [rawIngredient.id, rawIngredient]));
@@ -171,5 +183,6 @@ export function parseInternalTransferFormValues(
     assigned_to_user_id: validated.assigned_to_user_id ?? "",
     exception_code: defaults?.exception_code ?? "",
     exception_notes: defaults?.exception_notes ?? "",
+    dispatched_by_user_id: defaults?.dispatched_by_user_id ?? "",
   };
 }
