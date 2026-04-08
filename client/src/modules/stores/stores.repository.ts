@@ -1,16 +1,18 @@
 /*
- * File intent: provide local-storage-backed repository abstractions for Stores / Branch Operations Phase 1 and Phase 2A.
- * Design reminder for this file: keep Stores records separate from Logistics and Internal Transfer, and limit Phase 2A replenishment requests to Stores-side request creation and read-only viewing.
+ * File intent: provide local-storage-backed repository abstractions for Stores / Branch Operations Phase 1 and Phase 2B.
+ * Design reminder for this file: keep Stores records separate from Logistics and Internal Transfer, and keep replenishment request lifecycle limited to Stores-side demand capture, editing, and submission.
  */
 
 import {
   calculateOverageQuantity,
   calculateShortageQuantity,
+  isStoreReplenishmentRequestEditable,
   type StoreParLevel,
   type StoreParLevelUpsert,
   type StoreReplenishmentRequest,
   type StoreReplenishmentRequestCreateInput,
   type StoreReplenishmentRequestLine,
+  type StoreReplenishmentRequestUpdateInput,
   type StoreStockTake,
   type StoreStockTakeCreateInput,
   type StoreStockTakeLine,
@@ -124,9 +126,18 @@ const seedStoreStockTakes: StoreStockTake[] = [
   },
 ];
 
-function buildReplenishmentRequestLines(input: StoreReplenishmentRequestCreateInput): StoreReplenishmentRequestLine[] {
+function buildStoreReplenishmentRequestLineId(base: string, index: number) {
+  return `store-replenishment-request-line-${base}-${index + 1}-${Date.now()}`;
+}
+
+function buildReplenishmentRequestLines(
+  input: StoreReplenishmentRequestCreateInput | StoreReplenishmentRequestUpdateInput,
+  existingRequestId?: string,
+): StoreReplenishmentRequestLine[] {
+  const lineBase = existingRequestId ?? input.store_location_id;
+
   return input.lines.map((line, index) => ({
-    id: `store-replenishment-request-line-${index + 1}-${Date.now()}`,
+    id: line.id ?? buildStoreReplenishmentRequestLineId(lineBase, index),
     source_store_stock_take_line_id: line.source_store_stock_take_line_id,
     source_store_par_level_id: line.source_store_par_level_id,
     raw_ingredient_id: line.raw_ingredient_id,
@@ -259,7 +270,9 @@ function buildStoreStockTakeId(storeLocationId: string) {
 }
 
 function buildStoreStockTakeNumber(storeStockTakes: StoreStockTake[]) {
-  return `SST-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(storeStockTakes.length + 1).padStart(3, "0")}`;
+  return `SST-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(
+    storeStockTakes.length + 1,
+  ).padStart(3, "0")}`;
 }
 
 function buildStoreReplenishmentRequestId(storeLocationId: string) {
@@ -291,6 +304,8 @@ export interface StoreReplenishmentRequestRepository {
   list(): Promise<StoreReplenishmentRequest[]>;
   getById(id: string): Promise<StoreReplenishmentRequest | null>;
   create(input: StoreReplenishmentRequestCreateInput): Promise<StoreReplenishmentRequest>;
+  update(id: string, input: StoreReplenishmentRequestUpdateInput): Promise<StoreReplenishmentRequest>;
+  submit(id: string): Promise<StoreReplenishmentRequest>;
 }
 
 class LocalStoreParLevelRepository implements StoreParLevelRepository {
@@ -384,7 +399,7 @@ class LocalStoreReplenishmentRequestRepository implements StoreReplenishmentRequ
       request_number: buildStoreReplenishmentRequestNumber(current),
       store_location_id: input.store_location_id,
       request_date: input.request_date,
-      status: input.status,
+      status: "draft",
       source_store_stock_take_id: input.source_store_stock_take_id,
       requested_by_user_id: input.requested_by_user_id,
       notes: input.notes,
@@ -395,6 +410,56 @@ class LocalStoreReplenishmentRequestRepository implements StoreReplenishmentRequ
 
     writeStoreReplenishmentRequests([created, ...current]);
     return created;
+  }
+
+  async update(id: string, input: StoreReplenishmentRequestUpdateInput) {
+    const current = readStoreReplenishmentRequests();
+    const existing = current.find((item) => item.id === id);
+
+    if (!existing) {
+      throw new Error("Store Replenishment Request not found");
+    }
+
+    if (!isStoreReplenishmentRequestEditable(existing)) {
+      throw new Error("Only draft Store Replenishment Requests can be edited");
+    }
+
+    const updated: StoreReplenishmentRequest = {
+      ...existing,
+      store_location_id: input.store_location_id,
+      request_date: input.request_date,
+      requested_by_user_id: input.requested_by_user_id,
+      source_store_stock_take_id: input.source_store_stock_take_id,
+      notes: input.notes,
+      status: input.status,
+      lines: buildReplenishmentRequestLines(input, existing.id),
+      updated_at: new Date().toISOString(),
+    };
+
+    writeStoreReplenishmentRequests(current.map((item) => (item.id === id ? updated : item)));
+    return updated;
+  }
+
+  async submit(id: string) {
+    const current = readStoreReplenishmentRequests();
+    const existing = current.find((item) => item.id === id);
+
+    if (!existing) {
+      throw new Error("Store Replenishment Request not found");
+    }
+
+    if (!isStoreReplenishmentRequestEditable(existing)) {
+      throw new Error("Only draft Store Replenishment Requests can be submitted");
+    }
+
+    const submitted: StoreReplenishmentRequest = {
+      ...existing,
+      status: "submitted",
+      updated_at: new Date().toISOString(),
+    };
+
+    writeStoreReplenishmentRequests(current.map((item) => (item.id === id ? submitted : item)));
+    return submitted;
   }
 }
 

@@ -1,6 +1,6 @@
 /*
- * File intent: provide the Stores / Branch Operations Phase 2A replenishment request create form.
- * Design reminder for this file: keep the form structural, unstyled, and limited to Stores-side request capture without approval, conversion, or Logistics linkage.
+ * File intent: provide the Stores / Branch Operations replenishment request create and edit form.
+ * Design reminder for this file: keep the form structural, unstyled, and limited to Stores-side request capture and draft editing without approval, conversion, or Logistics linkage.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -101,9 +101,10 @@ export default function StoreReplenishmentRequestForm({
           </thead>
           <tbody>
             {lines.map((line, index) => (
-              <tr key={`${line.source_store_stock_take_line_id || line.raw_ingredient_id}-${index}`}>
+              <tr key={`${line.id || line.source_store_stock_take_line_id || line.raw_ingredient_id}-${index}`}>
                 <td>
                   {line.item_name}
+                  <input type="hidden" {...register(`lines.${index}.id`)} />
                   <input type="hidden" {...register(`lines.${index}.source_store_stock_take_line_id`)} />
                   <input type="hidden" {...register(`lines.${index}.source_store_par_level_id`)} />
                   <input type="hidden" {...register(`lines.${index}.raw_ingredient_id`)} />

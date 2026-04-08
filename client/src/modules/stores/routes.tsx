@@ -1,6 +1,6 @@
 /*
- * File intent: define Stores / Branch Operations routes for Store Par Level, Store Stock Take, and Phase 2A replenishment requests.
- * Design reminder for this file: keep Stores as a separate top-level module and keep replenishment requests limited to Stores-side demand capture plus read-only viewing.
+ * File intent: define Stores / Branch Operations routes for Store Par Level, Store Stock Take, and replenishment requests.
+ * Design reminder for this file: keep Stores as a separate top-level module and keep replenishment requests limited to Stores-side demand capture, editing, and submission only.
  */
 
 import RouteRedirect from "@/app/RouteRedirect";
@@ -28,6 +28,14 @@ function EditStoreParLevelRoutePage() {
   return <StoreParLevelFormPage mode="edit" />;
 }
 
+function CreateStoreReplenishmentRequestRoutePage() {
+  return <StoreReplenishmentRequestFormPage mode="create" />;
+}
+
+function EditStoreReplenishmentRequestRoutePage() {
+  return <StoreReplenishmentRequestFormPage mode="edit" />;
+}
+
 export const storesRoutes: AppRouteDefinition[] = [
   { path: "/stores", component: StoresEntryPage },
   { path: "/stores/par-levels", component: StoreParLevelsPage },
@@ -38,7 +46,11 @@ export const storesRoutes: AppRouteDefinition[] = [
   { path: "/stores/stock-takes/new", component: StoreStockTakeFormPage },
   { path: "/stores/stock-takes/:storeStockTakeId", component: StoreStockTakeDetailPage },
   { path: "/stores/replenishment-requests", component: StoreReplenishmentRequestsPage },
-  { path: "/stores/replenishment-requests/new", component: StoreReplenishmentRequestFormPage },
+  { path: "/stores/replenishment-requests/new", component: CreateStoreReplenishmentRequestRoutePage },
+  {
+    path: "/stores/replenishment-requests/:storeReplenishmentRequestId/edit",
+    component: EditStoreReplenishmentRequestRoutePage,
+  },
   {
     path: "/stores/replenishment-requests/:storeReplenishmentRequestId",
     component: StoreReplenishmentRequestDetailPage,

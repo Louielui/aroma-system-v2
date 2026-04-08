@@ -1,6 +1,6 @@
 /*
- * File intent: implement Stores / Branch Operations Phase 2A replenishment request create form page.
- * Design reminder for this file: keep replenishment request creation inside Stores demand capture only, without approval, conversion, or Logistics linkage.
+ * File intent: implement Stores / Branch Operations replenishment request create and edit form page.
+ * Design reminder for this file: keep replenishment request management inside Stores demand capture only, without approval, conversion, or Logistics linkage.
  */
 
 import { storesItems } from "@/app/navigation";
@@ -12,12 +12,19 @@ import {
 } from "@/modules/stores/stores.repository";
 import {
   createStoreReplenishmentRequestFormValues,
-  parseStoreReplenishmentRequestFormValues,
+  parseStoreReplenishmentRequestCreateFormValues,
+  parseStoreReplenishmentRequestUpdateFormValues,
+  storeReplenishmentRequestToFormValues,
 } from "@/modules/stores/stores.validation";
-import type { StoreReplenishmentRequestFormValues, StoreStockTake } from "@/modules/stores/stores.types";
+import {
+  isStoreReplenishmentRequestEditable,
+  type StoreReplenishmentRequest,
+  type StoreReplenishmentRequestFormValues,
+  type StoreStockTake,
+} from "@/modules/stores/stores.types";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useRoute } from "wouter";
 
 const emptyFormValues: StoreReplenishmentRequestFormValues = {
   store_location_id: "",
@@ -29,18 +36,28 @@ const emptyFormValues: StoreReplenishmentRequestFormValues = {
   lines: [],
 };
 
-export default function StoreReplenishmentRequestFormPage() {
+type StoreReplenishmentRequestFormPageProps = {
+  mode?: "create" | "edit";
+};
+
+export default function StoreReplenishmentRequestFormPage({
+  mode = "create",
+}: StoreReplenishmentRequestFormPageProps) {
   const [, navigate] = useLocation();
-  const { filterByAllowedLocations } = useAccessControl();
+  const { filterByAllowedLocations, isAllowedLocation } = useAccessControl();
+  const [matches, params] = useRoute<{ storeReplenishmentRequestId: string }>(
+    "/stores/replenishment-requests/:storeReplenishmentRequestId/edit",
+  );
   const [stockTakes, setStockTakes] = useState<StoreStockTake[]>([]);
   const [selectedStockTakeId, setSelectedStockTakeId] = useState("");
+  const [request, setRequest] = useState<StoreReplenishmentRequest | null>(null);
   const [defaultValues, setDefaultValues] = useState<StoreReplenishmentRequestFormValues>(emptyFormValues);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     let isMounted = true;
 
-    async function loadStockTakes() {
+    async function loadCreateState() {
       const allStockTakes = await storeStockTakeRepository.list();
       const scopedStockTakes = filterByAllowedLocations(allStockTakes, (item) => item.store_location_id).filter(
         (item) => item.lines.some((line) => line.shortage_quantity > 0),
@@ -58,12 +75,47 @@ export default function StoreReplenishmentRequestFormPage() {
       setIsLoading(false);
     }
 
-    loadStockTakes();
+    async function loadEditState() {
+      if (!matches || !params?.storeReplenishmentRequestId) {
+        setIsLoading(false);
+        return;
+      }
+
+      const existing = await storeReplenishmentRequestRepository.getById(params.storeReplenishmentRequestId);
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (!existing || !isAllowedLocation(existing.store_location_id)) {
+        navigate("/stores/replenishment-requests");
+        return;
+      }
+
+      if (!isStoreReplenishmentRequestEditable(existing)) {
+        navigate(`/stores/replenishment-requests/${existing.id}`);
+        return;
+      }
+
+      setRequest(existing);
+      setSelectedStockTakeId(existing.source_store_stock_take_id ?? "");
+      setDefaultValues(storeReplenishmentRequestToFormValues(existing));
+      setIsLoading(false);
+    }
+
+    if (mode === "edit") {
+      loadEditState();
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    loadCreateState();
 
     return () => {
       isMounted = false;
     };
-  }, [filterByAllowedLocations]);
+  }, [filterByAllowedLocations, isAllowedLocation, matches, mode, navigate, params?.storeReplenishmentRequestId]);
 
   const selectedStockTake = useMemo(
     () => stockTakes.find((item) => item.id === selectedStockTakeId) ?? null,
@@ -71,16 +123,28 @@ export default function StoreReplenishmentRequestFormPage() {
   );
 
   useEffect(() => {
+    if (mode !== "create") {
+      return;
+    }
+
     if (!selectedStockTake) {
       setDefaultValues(emptyFormValues);
       return;
     }
 
     setDefaultValues(createStoreReplenishmentRequestFormValues(selectedStockTake));
-  }, [selectedStockTake]);
+  }, [mode, selectedStockTake]);
 
   async function handleSubmit(values: StoreReplenishmentRequestFormValues) {
-    const payload = parseStoreReplenishmentRequestFormValues(values);
+    if (mode === "edit" && request) {
+      const payload = parseStoreReplenishmentRequestUpdateFormValues(values);
+      const updated = await storeReplenishmentRequestRepository.update(request.id, payload);
+      toast.success(`Store replenishment request ${updated.request_number} updated`);
+      navigate(`/stores/replenishment-requests/${updated.id}`);
+      return;
+    }
+
+    const payload = parseStoreReplenishmentRequestCreateFormValues(values);
     const created = await storeReplenishmentRequestRepository.create(payload);
     toast.success(`Store replenishment request ${created.request_number} created`);
     navigate(`/stores/replenishment-requests/${created.id}`);
@@ -94,8 +158,12 @@ export default function StoreReplenishmentRequestFormPage() {
     <section>
       <header>
         <p>Stores / Branch Operations</p>
-        <h1>Create Store Replenishment Request</h1>
-        <p>Select a Store Stock Take with shortage lines and create a draft Stores-side replenishment request. Phase 2A does not include approval, conversion, or Logistics linkage.</p>
+        <h1>{mode === "edit" ? "Edit Store Replenishment Request" : "Create Store Replenishment Request"}</h1>
+        <p>
+          {mode === "edit"
+            ? "Edit a draft Stores-side replenishment request before submission. Phase 2B supports draft and submitted lifecycle only, without approval, conversion, or Logistics linkage."
+            : "Select a Store Stock Take with shortage lines and create a draft Stores-side replenishment request. Phase 2B supports draft and submitted lifecycle only, without approval, conversion, or Logistics linkage."}
+        </p>
       </header>
 
       <nav aria-label="Stores module links">
@@ -113,31 +181,33 @@ export default function StoreReplenishmentRequestFormPage() {
         <Link href="/stores/replenishment-requests">Back to Store Replenishment Requests</Link>
       </p>
 
-      {stockTakes.length === 0 ? (
+      {mode === "create" && stockTakes.length === 0 ? (
         <p>No Store Stock Takes with shortage lines are available for your allowed locations. Create and finalize shortage-bearing stock takes first.</p>
       ) : (
         <>
-          <p>
-            <label>
-              <span>Source Store Stock Take</span>
-              <select
-                value={selectedStockTakeId}
-                onChange={(event) => {
-                  setSelectedStockTakeId(event.target.value);
-                }}
-              >
-                {stockTakes.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.stock_take_number} — {item.store_location_id} — {item.stock_take_date}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </p>
+          {mode === "create" ? (
+            <p>
+              <label>
+                <span>Source Store Stock Take</span>
+                <select
+                  value={selectedStockTakeId}
+                  onChange={(event) => {
+                    setSelectedStockTakeId(event.target.value);
+                  }}
+                >
+                  {stockTakes.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.stock_take_number} — {item.store_location_id} — {item.stock_take_date}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </p>
+          ) : null}
 
           <StoreReplenishmentRequestForm
             defaultValues={defaultValues}
-            submitLabel="Create Store Replenishment Request"
+            submitLabel={mode === "edit" ? "Save Store Replenishment Request" : "Create Store Replenishment Request"}
             onSubmit={handleSubmit}
           />
         </>

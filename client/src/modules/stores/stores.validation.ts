@@ -1,6 +1,6 @@
 /*
- * File intent: validate and convert Stores / Branch Operations form values for par levels, stock takes, and Phase 2A replenishment requests.
- * Design reminder for this file: keep the workflow structural, preserve Stores ownership of demand intent, and keep Phase 2A replenishment requests separate from Logistics and Internal Transfer.
+ * File intent: validate and convert Stores / Branch Operations form values for par levels, stock takes, and replenishment requests.
+ * Design reminder for this file: keep the workflow structural, preserve Stores ownership of demand intent, and keep replenishment requests separate from Logistics and Internal Transfer.
  */
 
 import { z } from "zod";
@@ -12,6 +12,7 @@ import type {
   StoreReplenishmentRequestCreateInput,
   StoreReplenishmentRequestFormLineValues,
   StoreReplenishmentRequestFormValues,
+  StoreReplenishmentRequestUpdateInput,
   StoreStockTake,
   StoreStockTakeCreateInput,
   StoreStockTakeFormLineValues,
@@ -64,6 +65,7 @@ export const storeStockTakeFormSchema = z.object({
 });
 
 const storeReplenishmentRequestLineSchema = z.object({
+  id: z.string(),
   source_store_stock_take_line_id: z.string(),
   source_store_par_level_id: z.string(),
   raw_ingredient_id: z.string().trim().min(1, "Missing Raw Ingredient id"),
@@ -83,7 +85,7 @@ export const storeReplenishmentRequestFormSchema = z.object({
   requested_by_user_id: z.string(),
   source_store_stock_take_id: z.string(),
   notes: z.string(),
-  status: z.enum(["draft"]),
+  status: z.enum(["draft", "submitted"]),
   lines: z
     .array(storeReplenishmentRequestLineSchema)
     .min(1, "At least one replenishment line is required")
@@ -140,7 +142,10 @@ export function parseStoreParLevelFormValues(values: StoreParLevelFormValues): S
   };
 }
 
-export function createStoreStockTakeFormValues(parLevels: StoreParLevel[], options?: Partial<StoreStockTake>): StoreStockTakeFormValues {
+export function createStoreStockTakeFormValues(
+  parLevels: StoreParLevel[],
+  options?: Partial<StoreStockTake>,
+): StoreStockTakeFormValues {
   return {
     store_location_id: options?.store_location_id ?? parLevels[0]?.store_location_id ?? "",
     stock_take_date: options?.stock_take_date ?? new Date().toISOString().slice(0, 10),
@@ -206,6 +211,7 @@ export function createStoreReplenishmentRequestFormValues(
     status: options?.status ?? "draft",
     lines:
       options?.lines?.map((line): StoreReplenishmentRequestFormLineValues => ({
+        id: line.id,
         source_store_stock_take_line_id: line.source_store_stock_take_line_id ?? "",
         source_store_par_level_id: line.source_store_par_level_id ?? "",
         raw_ingredient_id: line.raw_ingredient_id,
@@ -221,6 +227,7 @@ export function createStoreReplenishmentRequestFormValues(
       stockTake.lines
         .filter((line) => line.shortage_quantity > 0)
         .map((line): StoreReplenishmentRequestFormLineValues => ({
+          id: "",
           source_store_stock_take_line_id: line.id,
           source_store_par_level_id: line.store_par_level_id,
           raw_ingredient_id: line.raw_ingredient_id,
@@ -236,9 +243,36 @@ export function createStoreReplenishmentRequestFormValues(
   };
 }
 
-export function parseStoreReplenishmentRequestFormValues(
+export function storeReplenishmentRequestToFormValues(
+  request: StoreReplenishmentRequest,
+): StoreReplenishmentRequestFormValues {
+  return {
+    store_location_id: request.store_location_id,
+    request_date: request.request_date,
+    requested_by_user_id: request.requested_by_user_id ?? "",
+    source_store_stock_take_id: request.source_store_stock_take_id ?? "",
+    notes: request.notes,
+    status: request.status,
+    lines: request.lines.map((line) => ({
+      id: line.id,
+      source_store_stock_take_line_id: line.source_store_stock_take_line_id ?? "",
+      source_store_par_level_id: line.source_store_par_level_id ?? "",
+      raw_ingredient_id: line.raw_ingredient_id,
+      item_name: line.item_name,
+      category: line.category,
+      base_unit: line.base_unit,
+      par_quantity_snapshot: line.par_quantity_snapshot,
+      counted_quantity_snapshot: line.counted_quantity_snapshot,
+      shortage_quantity_snapshot: line.shortage_quantity_snapshot,
+      requested_quantity: String(line.requested_quantity),
+      line_notes: line.line_notes,
+    })),
+  };
+}
+
+function parseStoreReplenishmentRequestFormValues(
   values: StoreReplenishmentRequestFormValues,
-): StoreReplenishmentRequestCreateInput {
+): StoreReplenishmentRequestUpdateInput {
   const parsed = storeReplenishmentRequestFormSchema.parse(values);
 
   return {
@@ -250,6 +284,7 @@ export function parseStoreReplenishmentRequestFormValues(
     status: parsed.status,
     lines: parsed.lines
       .map((line) => ({
+        id: line.id.trim() === "" ? null : line.id,
         source_store_stock_take_line_id:
           line.source_store_stock_take_line_id.trim() === "" ? null : line.source_store_stock_take_line_id,
         source_store_par_level_id: line.source_store_par_level_id.trim() === "" ? null : line.source_store_par_level_id,
@@ -265,4 +300,21 @@ export function parseStoreReplenishmentRequestFormValues(
       }))
       .filter((line) => line.requested_quantity > 0),
   };
+}
+
+export function parseStoreReplenishmentRequestCreateFormValues(
+  values: StoreReplenishmentRequestFormValues,
+): StoreReplenishmentRequestCreateInput {
+  const parsed = parseStoreReplenishmentRequestFormValues({ ...values, status: "draft" });
+
+  return {
+    ...parsed,
+    status: "draft",
+  };
+}
+
+export function parseStoreReplenishmentRequestUpdateFormValues(
+  values: StoreReplenishmentRequestFormValues,
+): StoreReplenishmentRequestUpdateInput {
+  return parseStoreReplenishmentRequestFormValues(values);
 }

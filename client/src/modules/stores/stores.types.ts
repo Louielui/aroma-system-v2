@@ -1,11 +1,11 @@
 /*
- * File intent: define the approved Stores / Branch Operations domain models for par levels, stock takes, and Phase 2A replenishment requests.
- * Design reminder for this file: keep Stores records separate from Logistics and Internal Transfer, and limit Phase 2A replenishment requests to demand capture plus read-only viewing.
+ * File intent: define the approved Stores / Branch Operations domain models for par levels, stock takes, and replenishment requests.
+ * Design reminder for this file: keep Stores records separate from Logistics and Internal Transfer, and limit replenishment requests to Stores-side demand capture and lifecycle only.
  */
 
 export type StoreParLevelStatus = "active" | "inactive";
 export type StoreStockTakeStatus = "draft" | "submitted" | "finalized";
-export type StoreReplenishmentRequestStatus = "draft";
+export type StoreReplenishmentRequestStatus = "draft" | "submitted";
 
 export type StoreParLevel = {
   id: string;
@@ -142,6 +142,7 @@ export type StoreReplenishmentRequest = {
 };
 
 export type StoreReplenishmentRequestEntryLine = {
+  id: string | null;
   source_store_stock_take_line_id: string | null;
   source_store_par_level_id: string | null;
   raw_ingredient_id: string;
@@ -161,11 +162,22 @@ export type StoreReplenishmentRequestCreateInput = {
   requested_by_user_id: string | null;
   source_store_stock_take_id: string | null;
   notes: string;
+  status: "draft";
+  lines: StoreReplenishmentRequestEntryLine[];
+};
+
+export type StoreReplenishmentRequestUpdateInput = {
+  store_location_id: string;
+  request_date: string;
+  requested_by_user_id: string | null;
+  source_store_stock_take_id: string | null;
+  notes: string;
   status: StoreReplenishmentRequestStatus;
   lines: StoreReplenishmentRequestEntryLine[];
 };
 
 export type StoreReplenishmentRequestFormLineValues = {
+  id: string;
   source_store_stock_take_line_id: string;
   source_store_par_level_id: string;
   raw_ingredient_id: string;
@@ -256,4 +268,8 @@ export function summarizeStoreReplenishmentRequest(
       total_requested_quantity: 0,
     },
   );
+}
+
+export function isStoreReplenishmentRequestEditable(request: StoreReplenishmentRequest) {
+  return request.status === "draft";
 }

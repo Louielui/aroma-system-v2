@@ -1,5 +1,5 @@
 /*
- * File intent: implement Stores / Branch Operations Phase 2A replenishment request detail page.
+ * File intent: implement Stores / Branch Operations replenishment request detail page.
  * Design reminder for this file: keep replenishment requests as Stores demand records only, and do not introduce approval, conversion, or Internal Transfer execution behavior.
  */
 
@@ -7,10 +7,12 @@ import { storesItems } from "@/app/navigation";
 import { useAccessControl } from "@/contexts/AccessControlContext";
 import { storeReplenishmentRequestRepository } from "@/modules/stores/stores.repository";
 import {
+  isStoreReplenishmentRequestEditable,
   summarizeStoreReplenishmentRequest,
   type StoreReplenishmentRequest,
 } from "@/modules/stores/stores.types";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Link, useLocation, useRoute } from "wouter";
 
 export default function StoreReplenishmentRequestDetailPage() {
@@ -21,6 +23,7 @@ export default function StoreReplenishmentRequestDetailPage() {
   );
   const [item, setItem] = useState<StoreReplenishmentRequest | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -53,6 +56,25 @@ export default function StoreReplenishmentRequestDetailPage() {
     };
   }, [isAllowedLocation, matches, navigate, params?.storeReplenishmentRequestId]);
 
+  async function handleSubmitRequest() {
+    if (!item || !isStoreReplenishmentRequestEditable(item)) {
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const submitted = await storeReplenishmentRequestRepository.submit(item.id);
+      setItem(submitted);
+      toast.success(`Store replenishment request ${submitted.request_number} submitted`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to submit Store Replenishment Request";
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   if (isLoading) {
     return <p>Loading Store Replenishment Request...</p>;
   }
@@ -62,13 +84,16 @@ export default function StoreReplenishmentRequestDetailPage() {
   }
 
   const summary = summarizeStoreReplenishmentRequest(item.lines);
+  const isEditable = isStoreReplenishmentRequestEditable(item);
 
   return (
     <section>
       <header>
         <p>Stores / Branch Operations</p>
         <h1>{item.request_number}</h1>
-        <p>This page shows the Stores-side replenishment request as a demand record. Phase 2A does not include approval, conversion, or Logistics execution linkage.</p>
+        <p>
+          This page shows the Stores-side replenishment request as a demand record. Phase 2B supports draft and submitted lifecycle only, without approval, conversion, or Logistics execution linkage.
+        </p>
       </header>
 
       <nav aria-label="Stores module links">
@@ -85,6 +110,17 @@ export default function StoreReplenishmentRequestDetailPage() {
       <p>
         <Link href="/stores/replenishment-requests">Back to Store Replenishment Requests</Link>
       </p>
+
+      {isEditable ? (
+        <p>
+          <Link href={`/stores/replenishment-requests/${item.id}/edit`}>Edit draft request</Link>{" "}
+          <button type="button" onClick={handleSubmitRequest} disabled={isSubmitting}>
+            {isSubmitting ? "Submitting..." : "Submit request"}
+          </button>
+        </p>
+      ) : (
+        <p>This request has been submitted and is no longer editable in Stores Phase 2B.</p>
+      )}
 
       <dl>
         <dt>Store Location</dt>
