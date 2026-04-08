@@ -107,6 +107,12 @@ export type InventoryTransaction = {
   updated_at: string;
 };
 
+export type InventoryPostingResult = {
+  transaction_group: InventoryTransactionGroup;
+  transactions: InventoryTransaction[];
+  updated_balances: InventoryBalance[];
+};
+
 export type InventoryLocationUpsert = Omit<InventoryLocation, "id" | "created_at" | "updated_at">;
 
 export type InventoryBalanceUpsert = Omit<InventoryBalance, "id" | "created_at" | "updated_at">;

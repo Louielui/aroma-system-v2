@@ -16,6 +16,7 @@ import {
   isInternalTransferReceivingLocked,
 } from "@/modules/logistics/logistics-status.types";
 import type { SharedLogisticsStatus } from "@/modules/logistics/logistics-status.types";
+import { inventoryRepository } from "@/modules/inventory/inventory.repository";
 
 const STORAGE_KEY = "aroma-system-v2.logistics.internal-transfers";
 const DEFAULT_DISCREPANCY_MESSAGE = "Received quantity differs from picked quantity.";
@@ -488,6 +489,10 @@ class LocalInternalTransferRepository implements InternalTransferRepository {
     }
 
     const updated = applyStatusTransition(existing, nextStatus, actorUserId);
+
+    if (nextStatus === "received") {
+      await inventoryRepository.postInternalTransferReceipt(updated, actorUserId);
+    }
 
     writeInternalTransfers(
       internalTransfers.map((internalTransfer) => (internalTransfer.id === id ? updated : internalTransfer)),
