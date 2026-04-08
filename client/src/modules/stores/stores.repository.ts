@@ -1,6 +1,6 @@
-/**
- * File intent: provide local-storage-backed repository abstractions for Stores / Branch Operations Phase 1.
- * Design reminder for this file: keep Stores records separate from Logistics and Internal Transfer, and limit the workflow to par levels, stock takes, and shortage calculation.
+/*
+ * File intent: provide local-storage-backed repository abstractions for Stores / Branch Operations Phase 1 and Phase 2A.
+ * Design reminder for this file: keep Stores records separate from Logistics and Internal Transfer, and limit Phase 2A replenishment requests to Stores-side request creation and read-only viewing.
  */
 
 import {
@@ -8,6 +8,9 @@ import {
   calculateShortageQuantity,
   type StoreParLevel,
   type StoreParLevelUpsert,
+  type StoreReplenishmentRequest,
+  type StoreReplenishmentRequestCreateInput,
+  type StoreReplenishmentRequestLine,
   type StoreStockTake,
   type StoreStockTakeCreateInput,
   type StoreStockTakeLine,
@@ -15,6 +18,7 @@ import {
 
 const STORE_PAR_LEVELS_STORAGE_KEY = "aroma-system-v2.stores.par-levels";
 const STORE_STOCK_TAKES_STORAGE_KEY = "aroma-system-v2.stores.stock-takes";
+const STORE_REPLENISHMENT_REQUESTS_STORAGE_KEY = "aroma-system-v2.stores.replenishment-requests";
 
 const seedStoreParLevels: StoreParLevel[] = [
   {
@@ -120,8 +124,57 @@ const seedStoreStockTakes: StoreStockTake[] = [
   },
 ];
 
+function buildReplenishmentRequestLines(input: StoreReplenishmentRequestCreateInput): StoreReplenishmentRequestLine[] {
+  return input.lines.map((line, index) => ({
+    id: `store-replenishment-request-line-${index + 1}-${Date.now()}`,
+    source_store_stock_take_line_id: line.source_store_stock_take_line_id,
+    source_store_par_level_id: line.source_store_par_level_id,
+    raw_ingredient_id: line.raw_ingredient_id,
+    item_name: line.item_name,
+    category: line.category,
+    base_unit: line.base_unit,
+    par_quantity_snapshot: line.par_quantity_snapshot,
+    counted_quantity_snapshot: line.counted_quantity_snapshot,
+    shortage_quantity_snapshot: line.shortage_quantity_snapshot,
+    requested_quantity: line.requested_quantity,
+    line_notes: line.line_notes,
+  }));
+}
+
+const seedStoreReplenishmentRequests: StoreReplenishmentRequest[] = [
+  {
+    id: "store-replenishment-request-downtown-2026-02-18-001",
+    request_number: "SRR-20260218-001",
+    store_location_id: "store-downtown",
+    request_date: "2026-02-18",
+    status: "draft",
+    source_store_stock_take_id: "store-stock-take-downtown-2026-02-18",
+    requested_by_user_id: null,
+    notes: "Draft replenishment request created from Downtown shortage lines.",
+    lines: [
+      {
+        id: "store-replenishment-request-line-downtown-001",
+        source_store_stock_take_line_id: "store-stock-take-line-store-par-level-downtown-chicken-breast",
+        source_store_par_level_id: "store-par-level-downtown-chicken-breast",
+        raw_ingredient_id: "raw-ingredient-chicken-breast",
+        item_name: "Chicken Breast",
+        category: "Protein",
+        base_unit: "kg",
+        par_quantity_snapshot: 12,
+        counted_quantity_snapshot: 7,
+        shortage_quantity_snapshot: 5,
+        requested_quantity: 5,
+        line_notes: "Requested to replenish the full shortage amount.",
+      },
+    ],
+    created_at: new Date("2026-02-18T09:00:00.000Z").toISOString(),
+    updated_at: new Date("2026-02-18T09:00:00.000Z").toISOString(),
+  },
+];
+
 let memoryStoreParLevels = [...seedStoreParLevels];
 let memoryStoreStockTakes = [...seedStoreStockTakes];
+let memoryStoreReplenishmentRequests = [...seedStoreReplenishmentRequests];
 
 function canUseBrowserStorage() {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
@@ -163,12 +216,31 @@ function writeStoreStockTakes(storeStockTakes: StoreStockTake[]) {
   }
 }
 
+function writeStoreReplenishmentRequests(storeReplenishmentRequests: StoreReplenishmentRequest[]) {
+  memoryStoreReplenishmentRequests = [...storeReplenishmentRequests];
+
+  if (canUseBrowserStorage()) {
+    window.localStorage.setItem(
+      STORE_REPLENISHMENT_REQUESTS_STORAGE_KEY,
+      JSON.stringify(storeReplenishmentRequests),
+    );
+  }
+}
+
 function readStoreParLevels() {
   return readCollection(STORE_PAR_LEVELS_STORAGE_KEY, seedStoreParLevels, memoryStoreParLevels);
 }
 
 function readStoreStockTakes() {
   return readCollection(STORE_STOCK_TAKES_STORAGE_KEY, seedStoreStockTakes, memoryStoreStockTakes);
+}
+
+function readStoreReplenishmentRequests() {
+  return readCollection(
+    STORE_REPLENISHMENT_REQUESTS_STORAGE_KEY,
+    seedStoreReplenishmentRequests,
+    memoryStoreReplenishmentRequests,
+  );
 }
 
 function buildStoreParLevelId(input: StoreParLevelUpsert) {
@@ -190,6 +262,18 @@ function buildStoreStockTakeNumber(storeStockTakes: StoreStockTake[]) {
   return `SST-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(storeStockTakes.length + 1).padStart(3, "0")}`;
 }
 
+function buildStoreReplenishmentRequestId(storeLocationId: string) {
+  return `store-replenishment-request-${storeLocationId}-${Date.now()}`;
+}
+
+function buildStoreReplenishmentRequestNumber(
+  storeReplenishmentRequests: StoreReplenishmentRequest[],
+) {
+  return `SRR-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(
+    storeReplenishmentRequests.length + 1,
+  ).padStart(3, "0")}`;
+}
+
 export interface StoreParLevelRepository {
   list(): Promise<StoreParLevel[]>;
   getById(id: string): Promise<StoreParLevel | null>;
@@ -201,6 +285,12 @@ export interface StoreStockTakeRepository {
   list(): Promise<StoreStockTake[]>;
   getById(id: string): Promise<StoreStockTake | null>;
   create(input: StoreStockTakeCreateInput): Promise<StoreStockTake>;
+}
+
+export interface StoreReplenishmentRequestRepository {
+  list(): Promise<StoreReplenishmentRequest[]>;
+  getById(id: string): Promise<StoreReplenishmentRequest | null>;
+  create(input: StoreReplenishmentRequestCreateInput): Promise<StoreReplenishmentRequest>;
 }
 
 class LocalStoreParLevelRepository implements StoreParLevelRepository {
@@ -277,5 +367,38 @@ class LocalStoreStockTakeRepository implements StoreStockTakeRepository {
   }
 }
 
+class LocalStoreReplenishmentRequestRepository implements StoreReplenishmentRequestRepository {
+  async list() {
+    return readStoreReplenishmentRequests();
+  }
+
+  async getById(id: string) {
+    return readStoreReplenishmentRequests().find((item) => item.id === id) ?? null;
+  }
+
+  async create(input: StoreReplenishmentRequestCreateInput) {
+    const current = readStoreReplenishmentRequests();
+    const timestamp = new Date().toISOString();
+    const created: StoreReplenishmentRequest = {
+      id: buildStoreReplenishmentRequestId(input.store_location_id),
+      request_number: buildStoreReplenishmentRequestNumber(current),
+      store_location_id: input.store_location_id,
+      request_date: input.request_date,
+      status: input.status,
+      source_store_stock_take_id: input.source_store_stock_take_id,
+      requested_by_user_id: input.requested_by_user_id,
+      notes: input.notes,
+      lines: buildReplenishmentRequestLines(input),
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+
+    writeStoreReplenishmentRequests([created, ...current]);
+    return created;
+  }
+}
+
 export const storeParLevelRepository: StoreParLevelRepository = new LocalStoreParLevelRepository();
 export const storeStockTakeRepository: StoreStockTakeRepository = new LocalStoreStockTakeRepository();
+export const storeReplenishmentRequestRepository: StoreReplenishmentRequestRepository =
+  new LocalStoreReplenishmentRequestRepository();

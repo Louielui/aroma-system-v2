@@ -1,6 +1,6 @@
-/**
- * File intent: define Stores / Branch Operations Phase 1 routes for Store Par Level and Store Stock Take.
- * Design reminder for this file: keep Stores as a separate top-level module and keep route ownership explicit.
+/*
+ * File intent: define Stores / Branch Operations routes for Store Par Level, Store Stock Take, and Phase 2A replenishment requests.
+ * Design reminder for this file: keep Stores as a separate top-level module and keep replenishment requests limited to Stores-side demand capture plus read-only viewing.
  */
 
 import RouteRedirect from "@/app/RouteRedirect";
@@ -9,6 +9,9 @@ import { storesItems } from "@/app/navigation";
 import StoreParLevelDetailPage from "@/modules/stores/pages/StoreParLevelDetailPage";
 import StoreParLevelFormPage from "@/modules/stores/pages/StoreParLevelFormPage";
 import StoreParLevelsPage from "@/modules/stores/pages/StoreParLevelsPage";
+import StoreReplenishmentRequestDetailPage from "@/modules/stores/pages/StoreReplenishmentRequestDetailPage";
+import StoreReplenishmentRequestFormPage from "@/modules/stores/pages/StoreReplenishmentRequestFormPage";
+import StoreReplenishmentRequestsPage from "@/modules/stores/pages/StoreReplenishmentRequestsPage";
 import StoreStockTakeDetailPage from "@/modules/stores/pages/StoreStockTakeDetailPage";
 import StoreStockTakeFormPage from "@/modules/stores/pages/StoreStockTakeFormPage";
 import StoreStockTakesPage from "@/modules/stores/pages/StoreStockTakesPage";
@@ -34,4 +37,10 @@ export const storesRoutes: AppRouteDefinition[] = [
   { path: "/stores/stock-takes", component: StoreStockTakesPage },
   { path: "/stores/stock-takes/new", component: StoreStockTakeFormPage },
   { path: "/stores/stock-takes/:storeStockTakeId", component: StoreStockTakeDetailPage },
+  { path: "/stores/replenishment-requests", component: StoreReplenishmentRequestsPage },
+  { path: "/stores/replenishment-requests/new", component: StoreReplenishmentRequestFormPage },
+  {
+    path: "/stores/replenishment-requests/:storeReplenishmentRequestId",
+    component: StoreReplenishmentRequestDetailPage,
+  },
 ];

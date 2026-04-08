@@ -1,6 +1,6 @@
-/**
- * File intent: validate and convert Stores / Branch Operations Phase 1 form values for Store Par Level and Store Stock Take.
- * Design reminder for this file: keep the workflow structural, preserve Stores ownership of demand intent, and calculate shortages without introducing Logistics linkage.
+/*
+ * File intent: validate and convert Stores / Branch Operations form values for par levels, stock takes, and Phase 2A replenishment requests.
+ * Design reminder for this file: keep the workflow structural, preserve Stores ownership of demand intent, and keep Phase 2A replenishment requests separate from Logistics and Internal Transfer.
  */
 
 import { z } from "zod";
@@ -8,6 +8,10 @@ import type {
   StoreParLevel,
   StoreParLevelFormValues,
   StoreParLevelUpsert,
+  StoreReplenishmentRequest,
+  StoreReplenishmentRequestCreateInput,
+  StoreReplenishmentRequestFormLineValues,
+  StoreReplenishmentRequestFormValues,
   StoreStockTake,
   StoreStockTakeCreateInput,
   StoreStockTakeFormLineValues,
@@ -57,6 +61,36 @@ export const storeStockTakeFormSchema = z.object({
   notes: z.string(),
   status: z.enum(["draft", "submitted", "finalized"]),
   lines: z.array(storeStockTakeLineSchema).min(1, "At least one line is required"),
+});
+
+const storeReplenishmentRequestLineSchema = z.object({
+  source_store_stock_take_line_id: z.string(),
+  source_store_par_level_id: z.string(),
+  raw_ingredient_id: z.string().trim().min(1, "Missing Raw Ingredient id"),
+  item_name: z.string().trim().min(1, "Item name is required"),
+  category: z.string().trim().min(1, "Category is required"),
+  base_unit: z.string().trim().min(1, "Base unit is required"),
+  par_quantity_snapshot: z.number().nullable(),
+  counted_quantity_snapshot: z.number().nullable(),
+  shortage_quantity_snapshot: z.number().min(0, "Shortage quantity cannot be negative"),
+  requested_quantity: numericString,
+  line_notes: z.string(),
+});
+
+export const storeReplenishmentRequestFormSchema = z.object({
+  store_location_id: z.string().trim().min(1, "Store location is required"),
+  request_date: z.string().trim().min(1, "Request date is required"),
+  requested_by_user_id: z.string(),
+  source_store_stock_take_id: z.string(),
+  notes: z.string(),
+  status: z.enum(["draft"]),
+  lines: z
+    .array(storeReplenishmentRequestLineSchema)
+    .min(1, "At least one replenishment line is required")
+    .refine(
+      (lines) => lines.some((line) => Number(line.requested_quantity) > 0),
+      "At least one requested quantity must be greater than zero",
+    ),
 });
 
 export function createDefaultStoreParLevelFormValues(): StoreParLevelFormValues {
@@ -156,5 +190,79 @@ export function parseStoreStockTakeFormValues(values: StoreStockTakeFormValues):
       counted_quantity: Number(line.counted_quantity),
       line_notes: line.line_notes,
     })),
+  };
+}
+
+export function createStoreReplenishmentRequestFormValues(
+  stockTake: StoreStockTake,
+  options?: Partial<StoreReplenishmentRequest>,
+): StoreReplenishmentRequestFormValues {
+  return {
+    store_location_id: options?.store_location_id ?? stockTake.store_location_id,
+    request_date: options?.request_date ?? new Date().toISOString().slice(0, 10),
+    requested_by_user_id: options?.requested_by_user_id ?? "",
+    source_store_stock_take_id: options?.source_store_stock_take_id ?? stockTake.id,
+    notes: options?.notes ?? "",
+    status: options?.status ?? "draft",
+    lines:
+      options?.lines?.map((line): StoreReplenishmentRequestFormLineValues => ({
+        source_store_stock_take_line_id: line.source_store_stock_take_line_id ?? "",
+        source_store_par_level_id: line.source_store_par_level_id ?? "",
+        raw_ingredient_id: line.raw_ingredient_id,
+        item_name: line.item_name,
+        category: line.category,
+        base_unit: line.base_unit,
+        par_quantity_snapshot: line.par_quantity_snapshot,
+        counted_quantity_snapshot: line.counted_quantity_snapshot,
+        shortage_quantity_snapshot: line.shortage_quantity_snapshot,
+        requested_quantity: String(line.requested_quantity),
+        line_notes: line.line_notes,
+      })) ??
+      stockTake.lines
+        .filter((line) => line.shortage_quantity > 0)
+        .map((line): StoreReplenishmentRequestFormLineValues => ({
+          source_store_stock_take_line_id: line.id,
+          source_store_par_level_id: line.store_par_level_id,
+          raw_ingredient_id: line.raw_ingredient_id,
+          item_name: line.item_name,
+          category: line.category,
+          base_unit: line.base_unit,
+          par_quantity_snapshot: line.par_quantity_snapshot,
+          counted_quantity_snapshot: line.counted_quantity,
+          shortage_quantity_snapshot: line.shortage_quantity,
+          requested_quantity: String(line.shortage_quantity),
+          line_notes: line.line_notes,
+        })),
+  };
+}
+
+export function parseStoreReplenishmentRequestFormValues(
+  values: StoreReplenishmentRequestFormValues,
+): StoreReplenishmentRequestCreateInput {
+  const parsed = storeReplenishmentRequestFormSchema.parse(values);
+
+  return {
+    store_location_id: parsed.store_location_id,
+    request_date: parsed.request_date,
+    requested_by_user_id: parsed.requested_by_user_id.trim() === "" ? null : parsed.requested_by_user_id,
+    source_store_stock_take_id: parsed.source_store_stock_take_id.trim() === "" ? null : parsed.source_store_stock_take_id,
+    notes: parsed.notes,
+    status: parsed.status,
+    lines: parsed.lines
+      .map((line) => ({
+        source_store_stock_take_line_id:
+          line.source_store_stock_take_line_id.trim() === "" ? null : line.source_store_stock_take_line_id,
+        source_store_par_level_id: line.source_store_par_level_id.trim() === "" ? null : line.source_store_par_level_id,
+        raw_ingredient_id: line.raw_ingredient_id,
+        item_name: line.item_name,
+        category: line.category,
+        base_unit: line.base_unit,
+        par_quantity_snapshot: line.par_quantity_snapshot,
+        counted_quantity_snapshot: line.counted_quantity_snapshot,
+        shortage_quantity_snapshot: line.shortage_quantity_snapshot,
+        requested_quantity: Number(line.requested_quantity),
+        line_notes: line.line_notes,
+      }))
+      .filter((line) => line.requested_quantity > 0),
   };
 }
