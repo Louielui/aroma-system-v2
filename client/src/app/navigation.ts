@@ -39,6 +39,11 @@ export const logisticsItems: SidebarItem[] = [
   { title: "Delivery Status", path: "/logistics/delivery-status" },
 ];
 
+export const storesItems: SidebarItem[] = [
+  { title: "Store Par Levels", path: "/stores/par-levels" },
+  { title: "Store Stock Take", path: "/stores/stock-takes" },
+];
+
 export const sidebarSections: SidebarSection[] = [
   {
     title: "Procurement",
@@ -59,6 +64,11 @@ export const sidebarSections: SidebarSection[] = [
     title: "Logistics",
     basePath: "/logistics",
     items: logisticsItems,
+  },
+  {
+    title: "Stores",
+    basePath: "/stores",
+    items: storesItems,
   },
 ];
 

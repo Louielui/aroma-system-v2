@@ -1,0 +1,37 @@
+/**
+ * File intent: define Stores / Branch Operations Phase 1 routes for Store Par Level and Store Stock Take.
+ * Design reminder for this file: keep Stores as a separate top-level module and keep route ownership explicit.
+ */
+
+import RouteRedirect from "@/app/RouteRedirect";
+import type { AppRouteDefinition } from "@/app/route-definition";
+import { storesItems } from "@/app/navigation";
+import StoreParLevelDetailPage from "@/modules/stores/pages/StoreParLevelDetailPage";
+import StoreParLevelFormPage from "@/modules/stores/pages/StoreParLevelFormPage";
+import StoreParLevelsPage from "@/modules/stores/pages/StoreParLevelsPage";
+import StoreStockTakeDetailPage from "@/modules/stores/pages/StoreStockTakeDetailPage";
+import StoreStockTakeFormPage from "@/modules/stores/pages/StoreStockTakeFormPage";
+import StoreStockTakesPage from "@/modules/stores/pages/StoreStockTakesPage";
+
+function StoresEntryPage() {
+  return <RouteRedirect to={storesItems[0].path} />;
+}
+
+function CreateStoreParLevelRoutePage() {
+  return <StoreParLevelFormPage mode="create" />;
+}
+
+function EditStoreParLevelRoutePage() {
+  return <StoreParLevelFormPage mode="edit" />;
+}
+
+export const storesRoutes: AppRouteDefinition[] = [
+  { path: "/stores", component: StoresEntryPage },
+  { path: "/stores/par-levels", component: StoreParLevelsPage },
+  { path: "/stores/par-levels/new", component: CreateStoreParLevelRoutePage },
+  { path: "/stores/par-levels/:storeParLevelId/edit", component: EditStoreParLevelRoutePage },
+  { path: "/stores/par-levels/:storeParLevelId", component: StoreParLevelDetailPage },
+  { path: "/stores/stock-takes", component: StoreStockTakesPage },
+  { path: "/stores/stock-takes/new", component: StoreStockTakeFormPage },
+  { path: "/stores/stock-takes/:storeStockTakeId", component: StoreStockTakeDetailPage },
+];
