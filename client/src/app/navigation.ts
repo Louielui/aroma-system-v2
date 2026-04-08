@@ -33,6 +33,12 @@ export const hrItems: SidebarItem[] = [
   { title: "Onboarding", path: "/hr/onboarding" },
 ];
 
+export const logisticsItems: SidebarItem[] = [
+  { title: "Transfer Orders", path: "/logistics/transfer-orders" },
+  { title: "Pick List", path: "/logistics/pick-list" },
+  { title: "Delivery Status", path: "/logistics/delivery-status" },
+];
+
 export const sidebarSections: SidebarSection[] = [
   {
     title: "Procurement",
@@ -48,6 +54,11 @@ export const sidebarSections: SidebarSection[] = [
     title: "HR",
     basePath: "/hr",
     items: hrItems,
+  },
+  {
+    title: "Logistics",
+    basePath: "/logistics",
+    items: logisticsItems,
   },
 ];
 

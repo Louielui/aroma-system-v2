@@ -7,3 +7,87 @@
 - [x] Separate HR module routes and pages
 - [x] Verify strict Phase 1 architecture works
 - [x] Report Phase 1 status to the user
+- [ ] Draft AI feature restore backlog grouped into early and later restoration phases
+- [ ] List AI features in the correct restoration order without implementation
+- [ ] Deliver AI restore backlog to the user
+- [ ] Revise AI restore backlog so every AI feature is attached to a specific owning module
+- [ ] Remove any implication of a standalone AI module
+- [ ] Deliver the revised module-attached AI backlog to the user
+- [ ] Draft MVP Supplier single-table data model
+- [ ] Ensure the Supplier model stays simple and not over-normalized
+- [ ] Ensure later compatibility with Invoices, Price Book, and Raw Ingredients
+- [ ] Deliver the Supplier MVP data model to the user
+- [ ] Implement Suppliers list page using approved MVP Supplier model
+- [ ] Implement Supplier detail page
+- [ ] Implement create/edit supplier form with basic validation
+- [ ] Keep Suppliers feature API-ready without moving to other modules
+- [ ] Verify Suppliers pages, routes, and data handling approach
+- [ ] Confirm Raw Ingredients MVP data model and current Central Kitchen module context
+- [ ] Implement Raw Ingredients types, validation, and repository
+- [ ] Implement Raw Ingredients list, detail, and create/edit pages
+- [ ] Update Central Kitchen routes for Raw Ingredients feature
+- [ ] Verify Raw Ingredients pages, routes, and data handling approach
+- [ ] Preserve exact approved Raw Ingredients field names without redesign or renaming
+- [ ] Enforce base_unit usage across all stock-related Raw Ingredients fields
+- [ ] Keep Raw Ingredients as a single-table Central Kitchen model for pre-prep inventory
+- [ ] Apply Raw Ingredients low-stock rule: current_stock < reorder_point means Needs Reorder, using base_unit values only.
+- [ ] Show reorder_quantity on the Raw Ingredients list page.
+- [ ] Report the applied rule, pages changed, and files changed after verification.
+- [ ] Implement Prep Stock Take under Central Kitchen to update Raw Ingredients current_stock using counted quantities in base_unit.
+- [ ] Display Raw Ingredients in Prep Stock Take with input for actual counted quantity.
+- [ ] Save counted quantities by updating current_stock in the Raw Ingredients repository without changing the schema.
+- [ ] Keep implementation simple with no history or audit log.
+- [ ] Report the data flow, pages created, and files created after verification.
+- [ ] Implement Prep List MVP under Central Kitchen using a repository-driven pattern.
+- [ ] Show prep items with current_prep_quantity, target_quantity, and prep_needed.
+- [ ] Apply the formula prep_needed = target_quantity - current_prep_quantity, floored at 0.
+- [ ] Keep the implementation structural with no styling focus and no schema over-design.
+- [ ] Report the data model used, pages created, files created, and files changed after verification.
+- [ ] Implement HR People / User Management using the same architecture pattern: types, validation, repository, pages, and shared form.
+- [ ] Use the minimum People fields: id, name, email, role, allowed_locations, active_status, pay_type, hourly_rate.
+- [ ] Create PeoplePage, PersonDetailPage, PersonFormPage, and shared PersonForm.
+- [ ] Keep the module structural only with no onboarding work and no advanced auth redesign.
+- [ ] Report the data model, pages created, files created, and files changed after verification.
+- [ ] Implement role-based sidebar visibility using existing People fields only
+- [ ] Add route guards for Procurement, Central Kitchen, and HR routes
+- [ ] Apply location-scope filtering using allowed_locations for current module data flows
+- [ ] Keep onboarding untouched and avoid advanced auth redesign
+- [ ] Verify permission rules, protected routes, changed files, and affected modules
+- [ ] Add Logistics as a separate top-level module in the sidebar
+- [ ] Add Logistics module routes for Transfer Orders, Pick List, and Delivery Status
+- [ ] Create Logistics placeholder pages without business logic, data models, or styling work
+- [ ] Verify the Logistics Phase 1 shell and report routes added, pages created, and files changed
+- [ ] Logistics Phase 2 planning spec: define shared logistics status / tracking model only
+- [ ] Logistics Phase 2 planning spec: define Internal Transfer as a separate flow-specific data model and page set
+- [ ] Logistics Phase 2 planning spec: define External Pickup as a separate flow-specific data model and page set
+- [ ] Logistics Phase 2 planning spec: define Grocery Customer Order fulfillment as a separate flow-specific data model and page set
+- [ ] Logistics Phase 2 planning spec: document separation between shared status / tracking and flow-specific request / execution records
+- [ ] Logistics Phase 2 planning spec: confirm that Transfer Order remains internal-transfer-only and is not reused for other flows
+- [ ] Stop after planning spec delivery and wait for approval before any implementation
+- [ ] Fix the Logistics access-control TypeScript issue
+- [ ] Confirm the codebase is type-safe again before Logistics Phase 2A implementation
+- [ ] Implement Internal Transfer data model only for Logistics Phase 2A
+- [ ] Implement Internal Transfer pages only for Logistics Phase 2A
+- [ ] Implement basic Internal Transfer lifecycle / status flow only
+- [ ] Keep Delivery Status as shared Logistics tracking, without implementing External Pickup or Grocery Fulfillment
+- [ ] Stop after Internal Transfer Phase 2A and report the data model, pages, created files, changed files, and lifecycle / status flow
+- [ ] Logistics Phase 2B: add picked quantity per Internal Transfer line item
+- [ ] Logistics Phase 2B: add received quantity per Internal Transfer line item
+- [ ] Logistics Phase 2B: support partial fulfillment for Internal Transfer
+- [ ] Logistics Phase 2B: add discrepancy and shortage notes for Internal Transfer line items
+- [ ] Logistics Phase 2B: tighten lifecycle rules around picking, in_transit, and completed
+- [ ] Logistics Phase 2B: keep External Pickup out of scope
+- [ ] Logistics Phase 2B: keep Grocery Fulfillment out of scope
+- [ ] Logistics Phase 2B: keep inventory integration out of scope
+- [ ] Report Phase 2B data model changes, lifecycle changes, pages changed, and files changed
+- [ ] Verify current Git setup for aroma-system-v2
+- [ ] Review and clean .gitignore for safe GitHub backup
+- [ ] Organize the project into a clean commit-ready state without changing structure unnecessarily
+- [ ] Prepare the project for connection to a remote GitHub repository without pushing automatically
+- [ ] Provide copy-paste-ready GitHub repository creation and connection commands
+- [ ] Recommend a simple future commit and backup workflow
+- [ ] Rename existing origin to preserve internal backup remote
+- [ ] Add GitHub repository as new origin using https://github.com/Louielui/aroma-system-v2.git
+- [ ] Show git status before creating the backup commit
+- [ ] Prepare a clean local backup commit without pushing
+- [ ] Ask for user confirmation before any push to GitHub

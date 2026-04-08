@@ -9,6 +9,8 @@ import { procurementItems } from "@/app/navigation";
 import InvoicesPage from "@/modules/procurement/pages/InvoicesPage";
 import PriceBookPage from "@/modules/procurement/pages/PriceBookPage";
 import ScanUploadPage from "@/modules/procurement/pages/ScanUploadPage";
+import SupplierDetailPage from "@/modules/procurement/pages/SupplierDetailPage";
+import SupplierFormPage from "@/modules/procurement/pages/SupplierFormPage";
 import SuppliersPage from "@/modules/procurement/pages/SuppliersPage";
 import TransferOrdersPage from "@/modules/procurement/pages/TransferOrdersPage";
 
@@ -19,6 +21,9 @@ function ProcurementEntryPage() {
 export const procurementRoutes: AppRouteDefinition[] = [
   { path: "/procurement", component: ProcurementEntryPage },
   { path: "/procurement/suppliers", component: SuppliersPage },
+  { path: "/procurement/suppliers/new", component: SupplierFormPage },
+  { path: "/procurement/suppliers/:supplierId/edit", component: SupplierFormPage },
+  { path: "/procurement/suppliers/:supplierId", component: SupplierDetailPage },
   { path: "/procurement/scan-upload", component: ScanUploadPage },
   { path: "/procurement/invoices", component: InvoicesPage },
   { path: "/procurement/price-book", component: PriceBookPage },

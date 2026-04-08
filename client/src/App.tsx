@@ -1,5 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import AccessGuard from "@/components/auth/AccessGuard";
+import { AccessControlProvider } from "@/contexts/AccessControlContext";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -16,9 +18,11 @@ function Router() {
         <Route path="/">
           <RouteRedirect to={defaultRoute} />
         </Route>
-        {appRoutes.map(({ path, component: Component }) => (
+        {appRoutes.map(({ path, component: Component, requirePeopleManager }) => (
           <Route key={path} path={path}>
-            <Component />
+            <AccessGuard path={path} requirePeopleManager={requirePeopleManager}>
+              <Component />
+            </AccessGuard>
           </Route>
         ))}
         <Route path="/404" component={NotFound} />
@@ -32,10 +36,12 @@ function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light">
-        <TooltipProvider>
-          <Toaster />
-          <Router />
-        </TooltipProvider>
+        <AccessControlProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Router />
+          </TooltipProvider>
+        </AccessControlProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );

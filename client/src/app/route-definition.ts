@@ -10,4 +10,5 @@ export type AppRouteComponent = (props: Record<string, unknown>) => ReactNode;
 export type AppRouteDefinition = {
   path: string;
   component: AppRouteComponent;
+  requirePeopleManager?: boolean;
 };
