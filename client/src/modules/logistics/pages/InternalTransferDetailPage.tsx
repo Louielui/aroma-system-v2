@@ -1,5 +1,5 @@
 /**
- * File intent: render the Logistics Internal Transfer detail page for the Phase 4B dispatch and in-transit lifecycle.
+ * File intent: render the Logistics Internal Transfer detail page for the Phase 4C receiving lifecycle.
  * Design reminder for this file: keep execution controls explicit, preserve the separation from Stores demand records, and expose only Logistics-owned lifecycle actions.
  */
 
@@ -9,10 +9,12 @@ import { useAccessControl } from "@/contexts/AccessControlContext";
 import { internalTransferRepository } from "@/modules/logistics/internal-transfers.repository";
 import type { InternalTransfer, InternalTransferUpsert } from "@/modules/logistics/internal-transfers.types";
 import {
-  canManageInternalTransferFulfillment,
   canManageInternalTransferHeader,
+  canManageInternalTransferPicking,
+  canManageInternalTransferReceiving,
   getNextInternalTransferStatuses,
   isInternalTransferDispatchLocked,
+  isInternalTransferReceivingLocked,
   sharedLogisticsStatusLabels,
 } from "@/modules/logistics/logistics-status.types";
 
@@ -26,8 +28,15 @@ function canViewInternalTransfer(
   );
 }
 
-function sumLineValues(internalTransfer: InternalTransfer, field: "requested_quantity" | "picked_quantity") {
+function sumLineValues(
+  internalTransfer: InternalTransfer,
+  field: "requested_quantity" | "picked_quantity" | "received_quantity",
+) {
   return internalTransfer.line_items.reduce((total, lineItem) => total + lineItem[field], 0);
+}
+
+function hasDiscrepancy(lineItem: InternalTransfer["line_items"][number]) {
+  return lineItem.received_quantity !== lineItem.picked_quantity;
 }
 
 function toUpsertPayload(internalTransfer: InternalTransfer): InternalTransferUpsert {
@@ -66,6 +75,8 @@ function getTransitionButtonLabel(status: InternalTransfer["logistics_status"]) 
       return "Dispatch Transfer";
     case "in_transit":
       return "Mark In Transit";
+    case "received":
+      return "Complete Receiving";
     default:
       return `Move to ${sharedLogisticsStatusLabels[status]}`;
   }
@@ -77,7 +88,7 @@ export default function InternalTransferDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [internalTransfer, setInternalTransfer] = useState<InternalTransfer | null>(null);
-  const [isSavingPicking, setIsSavingPicking] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
 
   useEffect(() => {
@@ -160,20 +171,47 @@ export default function InternalTransferDetailPage() {
     });
   }
 
-  async function handleSavePickingProgress() {
+  function updateReceivedQuantity(lineId: string, nextValue: string) {
+    if (!internalTransfer) {
+      return;
+    }
+
+    setInternalTransfer({
+      ...internalTransfer,
+      line_items: internalTransfer.line_items.map((lineItem) => {
+        if (lineItem.id !== lineId) {
+          return lineItem;
+        }
+
+        const receivedQuantity = nextValue === "" ? 0 : Number(nextValue);
+        const discrepancyNotes =
+          receivedQuantity !== lineItem.picked_quantity && receivedQuantity >= 0
+            ? lineItem.discrepancy_notes || "Received quantity differs from picked quantity."
+            : "";
+
+        return {
+          ...lineItem,
+          received_quantity: receivedQuantity,
+          discrepancy_notes: discrepancyNotes,
+        };
+      }),
+    });
+  }
+
+  async function handleSaveProgress() {
     if (!internalTransfer) {
       return;
     }
 
     try {
       setError("");
-      setIsSavingPicking(true);
+      setIsSaving(true);
       const updated = await internalTransferRepository.update(internalTransfer.id, toUpsertPayload(internalTransfer));
       setInternalTransfer(updated);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to save picking progress.");
+      setError(saveError instanceof Error ? saveError.message : "Unable to save transfer progress.");
     } finally {
-      setIsSavingPicking(false);
+      setIsSaving(false);
     }
   }
 
@@ -210,16 +248,23 @@ export default function InternalTransferDetailPage() {
 
   const requestedTotal = sumLineValues(internalTransfer, "requested_quantity");
   const pickedTotal = sumLineValues(internalTransfer, "picked_quantity");
-  const canEditPicking = canManageInternalTransferFulfillment(internalTransfer.logistics_status);
+  const receivedTotal = sumLineValues(internalTransfer, "received_quantity");
+  const canEditPicking = canManageInternalTransferPicking(internalTransfer.logistics_status);
+  const canEditReceiving = canManageInternalTransferReceiving(internalTransfer.logistics_status);
   const isDispatchLocked = isInternalTransferDispatchLocked(internalTransfer.logistics_status);
+  const isReceivingLocked = isInternalTransferReceivingLocked(internalTransfer.logistics_status);
   const linkedStoresRequest = internalTransfer.source_store_replenishment_request_number;
+  const discrepancyCount = internalTransfer.line_items.filter(hasDiscrepancy).length;
 
   return (
     <section>
       <header>
         <p>Logistics</p>
         <h1>{internalTransfer.transfer_order_number}</h1>
-        <p>Internal Transfer execution now covers picking, dispatch, and in-transit progress within Logistics only.</p>
+        <p>
+          Internal Transfer execution now covers picking, dispatch, in-transit, and receiving progress within Logistics
+          only.
+        </p>
       </header>
 
       <p>
@@ -276,8 +321,16 @@ export default function InternalTransferDetailPage() {
             <td>{internalTransfer.dispatched_by_user_id || "—"}</td>
           </tr>
           <tr>
+            <th>Received at</th>
+            <td>{internalTransfer.received_at || "—"}</td>
+          </tr>
+          <tr>
             <th>Linked Stores request</th>
             <td>{linkedStoresRequest || "—"}</td>
+          </tr>
+          <tr>
+            <th>Exception summary</th>
+            <td>{internalTransfer.exception_notes || "—"}</td>
           </tr>
           <tr>
             <th>Notes</th>
@@ -287,7 +340,7 @@ export default function InternalTransferDetailPage() {
       </table>
 
       <section>
-        <h2>Picking Progress Summary</h2>
+        <h2>Execution Summary</h2>
         <table>
           <tbody>
             <tr>
@@ -297,6 +350,14 @@ export default function InternalTransferDetailPage() {
             <tr>
               <th>Total picked</th>
               <td>{pickedTotal}</td>
+            </tr>
+            <tr>
+              <th>Total received</th>
+              <td>{receivedTotal}</td>
+            </tr>
+            <tr>
+              <th>Discrepancy lines</th>
+              <td>{discrepancyCount}</td>
             </tr>
           </tbody>
         </table>
@@ -311,42 +372,66 @@ export default function InternalTransferDetailPage() {
               <th>Base Unit</th>
               <th>Requested</th>
               <th>Picked</th>
+              <th>Received</th>
+              <th>Discrepancy</th>
               <th>Line Notes</th>
             </tr>
           </thead>
           <tbody>
-            {internalTransfer.line_items.map((lineItem) => (
-              <tr key={lineItem.id}>
-                <td>{lineItem.item_name}</td>
-                <td>{lineItem.base_unit}</td>
-                <td>{lineItem.requested_quantity}</td>
-                <td>
-                  {canEditPicking ? (
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      max={String(lineItem.requested_quantity)}
-                      value={String(lineItem.picked_quantity)}
-                      onChange={(event) => updatePickedQuantity(lineItem.id, event.target.value)}
-                    />
-                  ) : (
-                    <span>
-                      {lineItem.picked_quantity}
-                      {isDispatchLocked ? " (locked)" : ""}
-                    </span>
-                  )}
-                </td>
-                <td>{lineItem.line_notes || "—"}</td>
-              </tr>
-            ))}
+            {internalTransfer.line_items.map((lineItem) => {
+              const discrepancy = hasDiscrepancy(lineItem);
+
+              return (
+                <tr key={lineItem.id}>
+                  <td>{lineItem.item_name}</td>
+                  <td>{lineItem.base_unit}</td>
+                  <td>{lineItem.requested_quantity}</td>
+                  <td>
+                    {canEditPicking ? (
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        max={String(lineItem.requested_quantity)}
+                        value={String(lineItem.picked_quantity)}
+                        onChange={(event) => updatePickedQuantity(lineItem.id, event.target.value)}
+                      />
+                    ) : (
+                      <span>
+                        {lineItem.picked_quantity}
+                        {isDispatchLocked ? " (locked)" : ""}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    {canEditReceiving ? (
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        max={String(lineItem.picked_quantity)}
+                        value={String(lineItem.received_quantity)}
+                        onChange={(event) => updateReceivedQuantity(lineItem.id, event.target.value)}
+                      />
+                    ) : (
+                      <span>
+                        {lineItem.received_quantity}
+                        {isReceivingLocked ? " (locked)" : ""}
+                      </span>
+                    )}
+                  </td>
+                  <td>{discrepancy ? lineItem.discrepancy_notes || "Discrepancy detected" : "—"}</td>
+                  <td>{lineItem.line_notes || "—"}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
 
-        {canEditPicking ? (
+        {canEditPicking || canEditReceiving ? (
           <p>
-            <button type="button" onClick={handleSavePickingProgress} disabled={isSavingPicking}>
-              {isSavingPicking ? "Saving Picking Progress..." : "Save Picking Progress"}
+            <button type="button" onClick={handleSaveProgress} disabled={isSaving}>
+              {isSaving ? "Saving Progress..." : canEditReceiving ? "Save Receiving Progress" : "Save Picking Progress"}
             </button>
           </p>
         ) : null}
@@ -355,13 +440,13 @@ export default function InternalTransferDetailPage() {
       <section>
         <h2>Lifecycle / Status Flow</h2>
         <p>
-          Phase 4B extends the Logistics execution object from picking into dispatch and in-transit handling without
-          changing Stores data or mirroring execution state back into Stores.
+          Phase 4C completes the Logistics execution object by adding receiving and discrepancy visibility without
+          changing Stores data, updating inventory, or merging execution state back into other modules.
         </p>
         <p>
-          Dispatch is allowed only after picking has started and at least one line has a picked quantity greater than 0.
-          Once dispatched, picked quantities become read-only. Receiving, discrepancy handling, and inventory integration
-          remain intentionally out of scope.
+          Receiving is allowed only after a transfer has moved into transit. While in transit, received quantities can
+          be recorded per line as long as they stay between 0 and the picked quantity. Once the transfer reaches the
+          received state, both picked and received quantities become read-only.
         </p>
         {nextStatuses.length > 0 ? (
           <p>
@@ -372,7 +457,7 @@ export default function InternalTransferDetailPage() {
             ))}
           </p>
         ) : (
-          <p>No further lifecycle transition is available for this transfer order in Phase 4B.</p>
+          <p>No further lifecycle transition is available for this transfer order in Phase 4C.</p>
         )}
       </section>
     </section>

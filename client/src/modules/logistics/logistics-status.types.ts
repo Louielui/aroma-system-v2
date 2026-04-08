@@ -12,6 +12,7 @@ export type SharedLogisticsStatus =
   | "picking"
   | "dispatched"
   | "in_transit"
+  | "received"
   | "completed"
   | "cancelled"
   | "exception";
@@ -45,6 +46,7 @@ export const sharedLogisticsStatusOptions: SharedLogisticsStatus[] = [
   "picking",
   "dispatched",
   "in_transit",
+  "received",
   "completed",
   "cancelled",
   "exception",
@@ -57,6 +59,7 @@ export const sharedLogisticsStatusLabels: Record<SharedLogisticsStatus, string> 
   picking: "Picking",
   dispatched: "Dispatched",
   in_transit: "In Transit",
+  received: "Received",
   completed: "Completed",
   cancelled: "Cancelled",
   exception: "Exception",
@@ -70,9 +73,11 @@ export function getNextInternalTransferStatuses(status: SharedLogisticsStatus): 
       return ["dispatched"];
     case "dispatched":
       return ["in_transit"];
+    case "in_transit":
+      return ["received"];
     case "pending_review":
     case "approved":
-    case "in_transit":
+    case "received":
     case "completed":
     case "cancelled":
     case "exception":
@@ -82,17 +87,25 @@ export function getNextInternalTransferStatuses(status: SharedLogisticsStatus): 
 }
 
 export function canEditInternalTransferStatus(status: SharedLogisticsStatus) {
-  return ["draft", "picking"].includes(status);
+  return ["draft", "picking", "in_transit"].includes(status);
 }
 
 export function canManageInternalTransferHeader(status: SharedLogisticsStatus) {
   return status === "draft";
 }
 
-export function canManageInternalTransferFulfillment(status: SharedLogisticsStatus) {
+export function canManageInternalTransferPicking(status: SharedLogisticsStatus) {
   return status === "picking";
 }
 
+export function canManageInternalTransferReceiving(status: SharedLogisticsStatus) {
+  return status === "in_transit";
+}
+
 export function isInternalTransferDispatchLocked(status: SharedLogisticsStatus) {
-  return ["dispatched", "in_transit", "completed", "cancelled", "exception"].includes(status);
+  return ["dispatched", "in_transit", "received", "completed", "cancelled", "exception"].includes(status);
+}
+
+export function isInternalTransferReceivingLocked(status: SharedLogisticsStatus) {
+  return ["received", "completed", "cancelled", "exception"].includes(status);
 }

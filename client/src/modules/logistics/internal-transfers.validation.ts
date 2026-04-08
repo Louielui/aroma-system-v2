@@ -1,6 +1,6 @@
 /**
  * File intent: validate and convert Internal Transfer form values into the Logistics Internal Transfer model.
- * Design reminder for this file: keep draft preparation separate from execution stages while enforcing safe picking defaults and immutable dispatch metadata handling.
+ * Design reminder for this file: keep draft preparation separate from execution stages while enforcing safe picking and receiving defaults plus immutable lifecycle metadata handling.
  */
 
 import { z } from "zod";
@@ -142,6 +142,8 @@ export function parseInternalTransferFormValues(
       | "exception_code"
       | "exception_notes"
       | "dispatched_by_user_id"
+      | "source_store_replenishment_request_id"
+      | "source_store_replenishment_request_number"
     >
   >,
 ): InternalTransferUpsert {
@@ -183,6 +185,8 @@ export function parseInternalTransferFormValues(
     assigned_to_user_id: validated.assigned_to_user_id ?? "",
     exception_code: defaults?.exception_code ?? "",
     exception_notes: defaults?.exception_notes ?? "",
-    dispatched_by_user_id: defaults?.dispatched_by_user_id ?? "",
+    dispatched_by_user_id: defaults?.dispatched_by_user_id,
+    source_store_replenishment_request_id: defaults?.source_store_replenishment_request_id ?? null,
+    source_store_replenishment_request_number: defaults?.source_store_replenishment_request_number ?? null,
   };
 }

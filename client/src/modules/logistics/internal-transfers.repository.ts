@@ -5,6 +5,7 @@
 
 import type {
   InternalTransfer,
+  InternalTransferLineItem,
   InternalTransferTrackingRow,
   InternalTransferUpsert,
 } from "@/modules/logistics/internal-transfers.types";
@@ -12,10 +13,12 @@ import {
   canEditInternalTransferStatus,
   getNextInternalTransferStatuses,
   isInternalTransferDispatchLocked,
+  isInternalTransferReceivingLocked,
 } from "@/modules/logistics/logistics-status.types";
 import type { SharedLogisticsStatus } from "@/modules/logistics/logistics-status.types";
 
 const STORAGE_KEY = "aroma-system-v2.logistics.internal-transfers";
+const DEFAULT_DISCREPANCY_MESSAGE = "Received quantity differs from picked quantity.";
 
 const seedInternalTransfers: InternalTransfer[] = [
   {
@@ -101,9 +104,9 @@ const seedInternalTransfers: InternalTransfer[] = [
     requested_by_user_id: "person-kitchen-manager-noah",
     approved_by_user_id: "",
     scheduled_dispatch_date: "2026-04-08",
-    logistics_status: "dispatched",
+    logistics_status: "in_transit",
     priority: "scheduled",
-    notes: "Picked quantities are locked after dispatch for transport handoff.",
+    notes: "Transfer has left the source and is awaiting receiving confirmation.",
     line_items: [
       {
         id: "raw-ingredient-rice-1",
@@ -137,26 +140,60 @@ function canUseBrowserStorage() {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
 
+function lineHasDiscrepancy(lineItem: InternalTransferLineItem) {
+  return lineItem.received_quantity !== lineItem.picked_quantity;
+}
+
 function normalizeLineItems(input: InternalTransfer["line_items"]) {
-  return input.map((lineItem) => ({
-    ...lineItem,
-    requested_quantity: Number.isFinite(lineItem.requested_quantity) ? lineItem.requested_quantity : 0,
-    picked_quantity: Number.isFinite(lineItem.picked_quantity) ? lineItem.picked_quantity : 0,
-    received_quantity: Number.isFinite(lineItem.received_quantity) ? lineItem.received_quantity : 0,
-    shortage_notes: lineItem.shortage_notes ?? "",
-    discrepancy_notes: lineItem.discrepancy_notes ?? "",
-    line_notes: lineItem.line_notes ?? "",
-  }));
+  return input.map((lineItem) => {
+    const requestedQuantity = Number.isFinite(lineItem.requested_quantity) ? lineItem.requested_quantity : 0;
+    const pickedQuantity = Number.isFinite(lineItem.picked_quantity) ? lineItem.picked_quantity : 0;
+    const receivedQuantity = Number.isFinite(lineItem.received_quantity) ? lineItem.received_quantity : 0;
+    const discrepancyNotes = lineItem.discrepancy_notes ?? "";
+
+    return {
+      ...lineItem,
+      requested_quantity: requestedQuantity,
+      picked_quantity: pickedQuantity,
+      received_quantity: receivedQuantity,
+      shortage_notes: lineItem.shortage_notes ?? "",
+      discrepancy_notes:
+        receivedQuantity !== pickedQuantity && !discrepancyNotes.trim()
+          ? DEFAULT_DISCREPANCY_MESSAGE
+          : discrepancyNotes,
+      line_notes: lineItem.line_notes ?? "",
+    };
+  });
+}
+
+function summarizeDiscrepancies(lineItems: InternalTransferLineItem[]) {
+  const discrepancyLines = lineItems.filter(lineHasDiscrepancy);
+
+  if (!discrepancyLines.length) {
+    return { exception_code: "" as const, exception_notes: "" };
+  }
+
+  const summary = discrepancyLines
+    .map((lineItem) => `${lineItem.item_name}: picked ${lineItem.picked_quantity}, received ${lineItem.received_quantity}`)
+    .join("; ");
+
+  return {
+    exception_code: "short_qty" as const,
+    exception_notes: `Receiving discrepancy detected. ${summary}`,
+  };
 }
 
 function normalizeInternalTransfer(input: InternalTransfer): InternalTransfer {
+  const lineItems = normalizeLineItems(input.line_items);
+  const discrepancySummary = summarizeDiscrepancies(lineItems);
+
   return {
     ...input,
     assigned_to_user_id: input.assigned_to_user_id ?? "",
-    line_items: normalizeLineItems(input.line_items),
+    line_items: lineItems,
     dispatched_by_user_id: input.dispatched_by_user_id ?? "",
-    exception_code: input.exception_code ?? "",
-    exception_notes: input.exception_notes ?? "",
+    exception_code: input.exception_code ?? discrepancySummary.exception_code,
+    exception_notes: input.exception_notes ?? discrepancySummary.exception_notes,
   };
 }
 
@@ -169,14 +206,14 @@ function readInternalTransfers(): InternalTransfer[] {
 
   if (!existing) {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(seedInternalTransfers));
-    return [...seedInternalTransfers];
+    return [...seedInternalTransfers].map(normalizeInternalTransfer);
   }
 
   try {
     const parsed = JSON.parse(existing) as InternalTransfer[];
-    return Array.isArray(parsed) ? parsed.map(normalizeInternalTransfer) : [...seedInternalTransfers];
+    return Array.isArray(parsed) ? parsed.map(normalizeInternalTransfer) : [...seedInternalTransfers].map(normalizeInternalTransfer);
   } catch {
-    return [...seedInternalTransfers];
+    return [...seedInternalTransfers].map(normalizeInternalTransfer);
   }
 }
 
@@ -224,11 +261,35 @@ function validateInternalTransferLineProgress(internalTransfer: InternalTransfer
     if (lineItem.picked_quantity > lineItem.requested_quantity) {
       throw new Error(`Picked quantity cannot exceed requested quantity for ${lineItem.item_name}.`);
     }
+
+    if (!Number.isFinite(lineItem.received_quantity)) {
+      throw new Error(`Received quantity must be a valid number for ${lineItem.item_name}.`);
+    }
+
+    if (lineItem.received_quantity < 0) {
+      throw new Error(`Received quantity cannot be negative for ${lineItem.item_name}.`);
+    }
+
+    if (lineItem.received_quantity > lineItem.picked_quantity) {
+      throw new Error(`Received quantity cannot exceed picked quantity for ${lineItem.item_name}.`);
+    }
   }
 }
 
 function hasAnyPickedQuantity(internalTransfer: InternalTransfer) {
   return internalTransfer.line_items.some((lineItem) => lineItem.picked_quantity > 0);
+}
+
+function applyDiscrepancyMetadata(internalTransfer: InternalTransfer): InternalTransfer {
+  const normalizedLineItems = normalizeLineItems(internalTransfer.line_items);
+  const discrepancySummary = summarizeDiscrepancies(normalizedLineItems);
+
+  return {
+    ...internalTransfer,
+    line_items: normalizedLineItems,
+    exception_code: discrepancySummary.exception_code,
+    exception_notes: discrepancySummary.exception_notes,
+  };
 }
 
 function validateTransitionRequirements(internalTransfer: InternalTransfer, nextStatus: SharedLogisticsStatus) {
@@ -244,9 +305,13 @@ function validateTransitionRequirements(internalTransfer: InternalTransfer, next
     }
   }
 
-  if (nextStatus === "dispatched") {
-    if (!hasAnyPickedQuantity(internalTransfer)) {
-      throw new Error("At least one line must have picked quantity greater than 0 before dispatch.");
+  if (nextStatus === "dispatched" && !hasAnyPickedQuantity(internalTransfer)) {
+    throw new Error("At least one line must have picked quantity greater than 0 before dispatch.");
+  }
+
+  if (nextStatus === "received") {
+    if (internalTransfer.logistics_status !== "in_transit") {
+      throw new Error("Internal Transfer can only be received after it is in transit.");
     }
   }
 }
@@ -259,21 +324,51 @@ function applyStatusTransition(
   validateTransitionRequirements(internalTransfer, nextStatus);
 
   const timestamp = new Date().toISOString();
+  const withDiscrepancies = nextStatus === "received" ? applyDiscrepancyMetadata(internalTransfer) : internalTransfer;
 
   return {
-    ...internalTransfer,
+    ...withDiscrepancies,
     logistics_status: nextStatus,
     approved_by_user_id:
-      nextStatus === "picking" ? actorUserId || internalTransfer.approved_by_user_id : internalTransfer.approved_by_user_id,
-    picked_at: nextStatus === "picking" && !internalTransfer.picked_at ? timestamp : internalTransfer.picked_at,
+      nextStatus === "picking" ? actorUserId || withDiscrepancies.approved_by_user_id : withDiscrepancies.approved_by_user_id,
+    picked_at: nextStatus === "picking" && !withDiscrepancies.picked_at ? timestamp : withDiscrepancies.picked_at,
     dispatched_at:
-      nextStatus === "dispatched" && !internalTransfer.dispatched_at ? timestamp : internalTransfer.dispatched_at,
+      nextStatus === "dispatched" && !withDiscrepancies.dispatched_at ? timestamp : withDiscrepancies.dispatched_at,
     dispatched_by_user_id:
       nextStatus === "dispatched"
-        ? actorUserId || internalTransfer.dispatched_by_user_id || ""
-        : internalTransfer.dispatched_by_user_id || "",
+        ? actorUserId || withDiscrepancies.dispatched_by_user_id || ""
+        : withDiscrepancies.dispatched_by_user_id || "",
+    received_at: nextStatus === "received" && !withDiscrepancies.received_at ? timestamp : withDiscrepancies.received_at,
     updated_at: timestamp,
   };
+}
+
+function enforceImmutableQuantities(existing: InternalTransfer, updated: InternalTransfer) {
+  const existingLines = new Map(existing.line_items.map((lineItem) => [lineItem.id, lineItem]));
+
+  for (const updatedLine of updated.line_items) {
+    const existingLine = existingLines.get(updatedLine.id);
+
+    if (!existingLine) {
+      continue;
+    }
+
+    if (isInternalTransferDispatchLocked(existing.logistics_status) && updatedLine.picked_quantity !== existingLine.picked_quantity) {
+      throw new Error(`Picked quantity cannot be edited after dispatch for ${updatedLine.item_name}.`);
+    }
+
+    if (existing.logistics_status !== "in_transit" && updatedLine.received_quantity !== existingLine.received_quantity) {
+      throw new Error(`Received quantity can only be edited while the transfer is in transit for ${updatedLine.item_name}.`);
+    }
+
+    if (isInternalTransferReceivingLocked(existing.logistics_status) && updatedLine.received_quantity !== existingLine.received_quantity) {
+      throw new Error(`Received quantity is locked after receiving for ${updatedLine.item_name}.`);
+    }
+
+    if (existing.logistics_status !== "draft" && updatedLine.requested_quantity !== existingLine.requested_quantity) {
+      throw new Error(`Requested quantity cannot be changed after picking starts for ${updatedLine.item_name}.`);
+    }
+  }
 }
 
 export interface InternalTransferRepository {
@@ -324,13 +419,17 @@ class LocalInternalTransferRepository implements InternalTransferRepository {
       throw new Error("Internal Transfer cannot start in transit without being dispatched first.");
     }
 
-    const internalTransfer: InternalTransfer = {
+    if (normalizedInput.logistics_status === "received" && !normalizedInput.received_at) {
+      throw new Error("Internal Transfer cannot start as received without a receiving timestamp.");
+    }
+
+    const internalTransfer: InternalTransfer = applyDiscrepancyMetadata({
       ...normalizedInput,
       id: buildInternalTransferId(input.destination_location_id),
       transfer_order_number: buildTransferOrderNumber(internalTransfers),
       created_at: timestamp,
       updated_at: timestamp,
-    };
+    });
 
     const next = [internalTransfer, ...internalTransfers];
     writeInternalTransfers(next);
@@ -349,16 +448,12 @@ class LocalInternalTransferRepository implements InternalTransferRepository {
       throw new Error("This Internal Transfer cannot be edited in its current lifecycle state.");
     }
 
-    if (isInternalTransferDispatchLocked(existing.logistics_status)) {
-      throw new Error("Picked quantities are locked after dispatch.");
-    }
-
     const updated: InternalTransfer = normalizeInternalTransfer({
       ...existing,
       ...input,
       id: existing.id,
       transfer_order_number: existing.transfer_order_number,
-      logistics_status: input.logistics_status ?? existing.logistics_status,
+      logistics_status: existing.logistics_status,
       picked_at: existing.picked_at,
       dispatched_at: existing.dispatched_at,
       dispatched_by_user_id: existing.dispatched_by_user_id ?? "",
@@ -368,13 +463,16 @@ class LocalInternalTransferRepository implements InternalTransferRepository {
       updated_at: new Date().toISOString(),
     });
 
+    enforceImmutableQuantities(existing, updated);
     validateInternalTransferLineProgress(updated);
 
+    const finalized = existing.logistics_status === "in_transit" ? applyDiscrepancyMetadata(updated) : updated;
+
     writeInternalTransfers(
-      internalTransfers.map((internalTransfer) => (internalTransfer.id === id ? updated : internalTransfer)),
+      internalTransfers.map((internalTransfer) => (internalTransfer.id === id ? finalized : internalTransfer)),
     );
 
-    return updated;
+    return finalized;
   }
 
   async transitionStatus(id: string, nextStatus: SharedLogisticsStatus, actorUserId = "") {
