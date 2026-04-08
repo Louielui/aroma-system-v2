@@ -5,7 +5,7 @@
 
 import type { Person, PersonRole } from "@/modules/hr/people.types";
 
-export type AppModuleKey = "procurement" | "central_kitchen" | "hr" | "logistics" | "stores";
+export type AppModuleKey = "procurement" | "central_kitchen" | "hr" | "logistics" | "stores" | "inventory";
 
 export type AccessContext = {
   currentUser: Person | null;
@@ -20,11 +20,11 @@ export type AccessContext = {
 const STORAGE_KEY = "aroma-system-v2.current-user-id";
 
 const MODULE_ACCESS_BY_ROLE: Record<PersonRole, AppModuleKey[]> = {
-  admin: ["procurement", "central_kitchen", "hr", "logistics", "stores"],
+  admin: ["procurement", "central_kitchen", "hr", "logistics", "stores", "inventory"],
   hr: ["hr"],
-  procurement_manager: ["procurement", "logistics", "stores"],
-  kitchen_manager: ["central_kitchen", "logistics", "stores"],
-  inventory_staff: ["procurement", "central_kitchen", "logistics", "stores"],
+  procurement_manager: ["procurement", "logistics", "stores", "inventory"],
+  kitchen_manager: ["central_kitchen", "logistics", "stores", "inventory"],
+  inventory_staff: ["procurement", "central_kitchen", "logistics", "stores", "inventory"],
   prep_staff: ["central_kitchen", "logistics", "stores"],
 };
 
@@ -51,6 +51,10 @@ export function getModuleKeyFromPath(path: string): AppModuleKey | null {
 
   if (path.startsWith("/stores")) {
     return "stores";
+  }
+
+  if (path.startsWith("/inventory")) {
+    return "inventory";
   }
 
   return null;

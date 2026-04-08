@@ -45,6 +45,8 @@ export const storesItems: SidebarItem[] = [
   { title: "Replenishment Requests", path: "/stores/replenishment-requests" },
 ];
 
+export const inventoryItems: SidebarItem[] = [{ title: "Inventory Overview", path: "/inventory/overview" }];
+
 export const sidebarSections: SidebarSection[] = [
   {
     title: "Procurement",
@@ -70,6 +72,11 @@ export const sidebarSections: SidebarSection[] = [
     title: "Stores",
     basePath: "/stores",
     items: storesItems,
+  },
+  {
+    title: "Inventory",
+    basePath: "/inventory",
+    items: inventoryItems,
   },
 ];
 
