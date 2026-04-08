@@ -1,6 +1,6 @@
 /**
- * File intent: render the reusable Internal Transfer create/edit form for Logistics Phase 2B.
- * Design reminder for this file: keep the form structural, explicit, and separate from repository and status logic.
+ * File intent: render the reusable Internal Transfer create/edit form for Logistics Phase 4A.
+ * Design reminder for this file: keep the draft preparation form focused on assignment, requested quantities, and line setup before picking begins.
  */
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
@@ -107,6 +107,10 @@ export default function InternalTransferForm({
   return (
     <form onSubmit={handleSubmit}>
       <p>
+        This form prepares the transfer in <strong>draft</strong>. Picking quantities are recorded later from the detail page after the transfer is assigned and picking has started.
+      </p>
+
+      <p>
         <label>
           Request date
           <br />
@@ -167,6 +171,18 @@ export default function InternalTransferForm({
 
       <p>
         <label>
+          Assigned to user ID
+          <br />
+          <input
+            type="text"
+            value={values.assigned_to_user_id}
+            onChange={(event) => updateField("assigned_to_user_id", event.target.value)}
+          />
+        </label>
+      </p>
+
+      <p>
+        <label>
           Scheduled dispatch date
           <br />
           <input
@@ -189,18 +205,6 @@ export default function InternalTransferForm({
             <option value="urgent">Urgent</option>
             <option value="scheduled">Scheduled</option>
           </select>
-        </label>
-      </p>
-
-      <p>
-        <label>
-          Assigned to user ID
-          <br />
-          <input
-            type="text"
-            value={values.assigned_to_user_id}
-            onChange={(event) => updateField("assigned_to_user_id", event.target.value)}
-          />
         </label>
       </p>
 
@@ -251,58 +255,6 @@ export default function InternalTransferForm({
                     step="0.01"
                     value={lineItem.requested_quantity}
                     onChange={(event) => updateLineItem(index, "requested_quantity", event.target.value)}
-                  />
-                </label>
-              </p>
-
-              <p>
-                <label>
-                  Picked quantity
-                  <br />
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={lineItem.picked_quantity}
-                    onChange={(event) => updateLineItem(index, "picked_quantity", event.target.value)}
-                  />
-                </label>
-              </p>
-
-              <p>
-                <label>
-                  Received quantity
-                  <br />
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={lineItem.received_quantity}
-                    onChange={(event) => updateLineItem(index, "received_quantity", event.target.value)}
-                  />
-                </label>
-              </p>
-
-              <p>
-                <label>
-                  Shortage notes
-                  <br />
-                  <input
-                    type="text"
-                    value={lineItem.shortage_notes}
-                    onChange={(event) => updateLineItem(index, "shortage_notes", event.target.value)}
-                  />
-                </label>
-              </p>
-
-              <p>
-                <label>
-                  Discrepancy notes
-                  <br />
-                  <input
-                    type="text"
-                    value={lineItem.discrepancy_notes}
-                    onChange={(event) => updateLineItem(index, "discrepancy_notes", event.target.value)}
                   />
                 </label>
               </p>

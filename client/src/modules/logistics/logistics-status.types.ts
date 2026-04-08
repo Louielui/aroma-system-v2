@@ -1,6 +1,6 @@
 /**
  * File intent: define shared logistics status and tracking primitives for Logistics execution flows.
- * Design reminder for this file: share only operational status and tracking concerns, not business-intent records.
+ * Design reminder for this file: share only operational status and tracking concerns, and keep Internal Transfer execution scoped to Phase 4A picking only.
  */
 
 export type LogisticsFlowType = "internal_transfer" | "external_pickup" | "grocery_order_fulfillment";
@@ -62,15 +62,11 @@ export const sharedLogisticsStatusLabels: Record<SharedLogisticsStatus, string> 
 export function getNextInternalTransferStatuses(status: SharedLogisticsStatus): SharedLogisticsStatus[] {
   switch (status) {
     case "draft":
-      return ["pending_review", "cancelled"];
-    case "pending_review":
-      return ["approved", "cancelled", "exception"];
-    case "approved":
-      return ["picking", "cancelled", "exception"];
+      return ["picking"];
     case "picking":
-      return ["in_transit", "exception"];
+    case "pending_review":
+    case "approved":
     case "in_transit":
-      return ["completed", "exception"];
     case "completed":
     case "cancelled":
     case "exception":
@@ -80,13 +76,13 @@ export function getNextInternalTransferStatuses(status: SharedLogisticsStatus): 
 }
 
 export function canEditInternalTransferStatus(status: SharedLogisticsStatus) {
-  return ["draft", "pending_review", "approved", "picking", "in_transit"].includes(status);
+  return ["draft", "picking"].includes(status);
 }
 
 export function canManageInternalTransferHeader(status: SharedLogisticsStatus) {
-  return ["draft", "pending_review", "approved"].includes(status);
+  return status === "draft";
 }
 
 export function canManageInternalTransferFulfillment(status: SharedLogisticsStatus) {
-  return ["approved", "picking", "in_transit"].includes(status);
+  return status === "picking";
 }

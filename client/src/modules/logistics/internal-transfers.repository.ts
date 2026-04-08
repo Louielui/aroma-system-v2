@@ -1,6 +1,6 @@
 /**
- * File intent: provide an API-ready repository abstraction for the Logistics Internal Transfer flow in Phase 2B.
- * Design reminder for this file: keep Internal Transfer separate from other logistics flows while enabling shared tracking output.
+ * File intent: provide an API-ready repository abstraction for the Logistics Internal Transfer flow.
+ * Design reminder for this file: keep Internal Transfer execution separate from Stores demand records and limit Phase 4A to the picking stage only.
  */
 
 import type {
@@ -26,9 +26,9 @@ const seedInternalTransfers: InternalTransfer[] = [
     requested_by_user_id: "person-kitchen-manager-noah",
     approved_by_user_id: "",
     scheduled_dispatch_date: "2026-04-09",
-    logistics_status: "pending_review",
+    logistics_status: "draft",
     priority: "normal",
-    notes: "Initial controlled internal transfer for Logistics refinement.",
+    notes: "Draft internal transfer prepared for picking handoff.",
     line_items: [
       {
         id: "raw-ingredient-chicken-breast-1",
@@ -60,11 +60,11 @@ const seedInternalTransfers: InternalTransfer[] = [
     source_location_id: "Central Kitchen",
     destination_location_id: "Forks",
     requested_by_user_id: "person-kitchen-manager-noah",
-    approved_by_user_id: "person-admin-julia",
+    approved_by_user_id: "",
     scheduled_dispatch_date: "2026-04-08",
-    logistics_status: "in_transit",
+    logistics_status: "picking",
     priority: "urgent",
-    notes: "Urgent stock support for the Forks location.",
+    notes: "Picking has started for the urgent Forks transfer.",
     line_items: [
       {
         id: "raw-ingredient-yellow-onion-1",
@@ -74,20 +74,20 @@ const seedInternalTransfers: InternalTransfer[] = [
         requested_quantity: 12,
         picked_quantity: 10,
         received_quantity: 0,
-        shortage_notes: "2 kg short at picking due to prep holdback.",
+        shortage_notes: "",
         discrepancy_notes: "",
-        line_notes: "Rush dispatch.",
+        line_notes: "Rush pick for evening prep.",
       },
     ],
     assigned_to_user_id: "person-inventory-staff-maya",
     picked_at: new Date("2026-04-08T11:00:00.000Z").toISOString(),
-    dispatched_at: new Date("2026-04-08T12:00:00.000Z").toISOString(),
+    dispatched_at: "",
     received_at: "",
     completed_at: "",
     exception_code: "",
     exception_notes: "",
     created_at: new Date("2026-04-08T09:00:00.000Z").toISOString(),
-    updated_at: new Date("2026-04-08T12:00:00.000Z").toISOString(),
+    updated_at: new Date("2026-04-08T11:00:00.000Z").toISOString(),
   },
 ];
 
@@ -100,6 +100,7 @@ function canUseBrowserStorage() {
 function normalizeLineItems(input: InternalTransfer["line_items"]) {
   return input.map((lineItem) => ({
     ...lineItem,
+    requested_quantity: Number.isFinite(lineItem.requested_quantity) ? lineItem.requested_quantity : 0,
     picked_quantity: Number.isFinite(lineItem.picked_quantity) ? lineItem.picked_quantity : 0,
     received_quantity: Number.isFinite(lineItem.received_quantity) ? lineItem.received_quantity : 0,
     shortage_notes: lineItem.shortage_notes ?? "",
@@ -111,6 +112,7 @@ function normalizeLineItems(input: InternalTransfer["line_items"]) {
 function normalizeInternalTransfer(input: InternalTransfer): InternalTransfer {
   return {
     ...input,
+    assigned_to_user_id: input.assigned_to_user_id ?? "",
     line_items: normalizeLineItems(input.line_items),
     exception_code: input.exception_code ?? "",
     exception_notes: input.exception_notes ?? "",
@@ -160,38 +162,26 @@ function buildTransferOrderNumber(existingTransfers: InternalTransfer[]) {
   return `TO-${String(1000 + existingTransfers.length + 1)}`;
 }
 
-function hasAnyPickedQuantity(internalTransfer: InternalTransfer) {
-  return internalTransfer.line_items.some((lineItem) => lineItem.picked_quantity > 0);
-}
-
-function hasAnyReceivedQuantity(internalTransfer: InternalTransfer) {
-  return internalTransfer.line_items.some((lineItem) => lineItem.received_quantity > 0);
-}
-
 function validateInternalTransferLineProgress(internalTransfer: InternalTransfer) {
+  if (!internalTransfer.line_items.length) {
+    throw new Error("At least one Internal Transfer line is required.");
+  }
+
   for (const lineItem of internalTransfer.line_items) {
+    if (!Number.isFinite(lineItem.requested_quantity) || lineItem.requested_quantity <= 0) {
+      throw new Error(`Requested quantity must be greater than 0 for ${lineItem.item_name}.`);
+    }
+
+    if (!Number.isFinite(lineItem.picked_quantity)) {
+      throw new Error(`Picked quantity must be a valid number for ${lineItem.item_name}.`);
+    }
+
+    if (lineItem.picked_quantity < 0) {
+      throw new Error(`Picked quantity cannot be negative for ${lineItem.item_name}.`);
+    }
+
     if (lineItem.picked_quantity > lineItem.requested_quantity) {
       throw new Error(`Picked quantity cannot exceed requested quantity for ${lineItem.item_name}.`);
-    }
-
-    if (lineItem.received_quantity > lineItem.picked_quantity) {
-      throw new Error(`Received quantity cannot exceed picked quantity for ${lineItem.item_name}.`);
-    }
-
-    if (
-      lineItem.picked_quantity > 0 &&
-      lineItem.picked_quantity < lineItem.requested_quantity &&
-      !lineItem.shortage_notes.trim()
-    ) {
-      throw new Error(`Shortage notes are required when picked quantity is short for ${lineItem.item_name}.`);
-    }
-
-    if (
-      lineItem.received_quantity > 0 &&
-      lineItem.received_quantity < lineItem.picked_quantity &&
-      !lineItem.discrepancy_notes.trim()
-    ) {
-      throw new Error(`Discrepancy notes are required when received quantity is short for ${lineItem.item_name}.`);
     }
   }
 }
@@ -201,27 +191,11 @@ function validateTransitionRequirements(internalTransfer: InternalTransfer, next
 
   if (nextStatus === "picking") {
     if (!internalTransfer.assigned_to_user_id.trim()) {
-      throw new Error("Assigned to user ID is required before moving an Internal Transfer into picking.");
+      throw new Error("Assigned to user ID is required before starting picking.");
     }
 
-    return;
-  }
-
-  if (nextStatus === "in_transit") {
-    if (!hasAnyPickedQuantity(internalTransfer)) {
-      throw new Error("At least one picked quantity is required before moving an Internal Transfer into transit.");
-    }
-
-    return;
-  }
-
-  if (nextStatus === "completed") {
-    if (!hasAnyPickedQuantity(internalTransfer)) {
-      throw new Error("Picked quantities must be recorded before completion.");
-    }
-
-    if (!hasAnyReceivedQuantity(internalTransfer)) {
-      throw new Error("Received quantities must be recorded before completion.");
+    if (internalTransfer.line_items.length < 1) {
+      throw new Error("At least one line item is required before starting picking.");
     }
   }
 }
@@ -239,11 +213,8 @@ function applyStatusTransition(
     ...internalTransfer,
     logistics_status: nextStatus,
     approved_by_user_id:
-      nextStatus === "approved" ? actorUserId || internalTransfer.approved_by_user_id : internalTransfer.approved_by_user_id,
+      nextStatus === "picking" ? actorUserId || internalTransfer.approved_by_user_id : internalTransfer.approved_by_user_id,
     picked_at: nextStatus === "picking" && !internalTransfer.picked_at ? timestamp : internalTransfer.picked_at,
-    dispatched_at: nextStatus === "in_transit" ? timestamp : internalTransfer.dispatched_at,
-    received_at: nextStatus === "completed" ? timestamp : internalTransfer.received_at,
-    completed_at: nextStatus === "completed" ? timestamp : internalTransfer.completed_at,
     updated_at: timestamp,
   };
 }
@@ -267,7 +238,9 @@ class LocalInternalTransferRepository implements InternalTransferRepository {
   }
 
   async create(input: InternalTransferUpsert) {
-    validateInternalTransferLineProgress({
+    const internalTransfers = readInternalTransfers();
+    const timestamp = new Date().toISOString();
+    const normalizedInput = normalizeInternalTransfer({
       ...input,
       id: "new",
       transfer_order_number: "new",
@@ -275,21 +248,20 @@ class LocalInternalTransferRepository implements InternalTransferRepository {
       dispatched_at: "",
       received_at: "",
       completed_at: "",
-      created_at: "",
-      updated_at: "",
+      created_at: timestamp,
+      updated_at: timestamp,
     });
 
-    const internalTransfers = readInternalTransfers();
-    const timestamp = new Date().toISOString();
+    validateInternalTransferLineProgress(normalizedInput);
+
+    if (normalizedInput.logistics_status === "picking") {
+      validateTransitionRequirements(normalizedInput, "picking");
+    }
+
     const internalTransfer: InternalTransfer = {
+      ...normalizedInput,
       id: buildInternalTransferId(input.destination_location_id),
       transfer_order_number: buildTransferOrderNumber(internalTransfers),
-      ...input,
-      line_items: normalizeLineItems(input.line_items),
-      picked_at: "",
-      dispatched_at: "",
-      received_at: "",
-      completed_at: "",
       created_at: timestamp,
       updated_at: timestamp,
     };
@@ -316,6 +288,7 @@ class LocalInternalTransferRepository implements InternalTransferRepository {
       ...input,
       id: existing.id,
       transfer_order_number: existing.transfer_order_number,
+      logistics_status: input.logistics_status ?? existing.logistics_status,
       picked_at: existing.picked_at,
       dispatched_at: existing.dispatched_at,
       received_at: existing.received_at,
@@ -364,13 +337,7 @@ class LocalInternalTransferRepository implements InternalTransferRepository {
       scheduled_date: internalTransfer.scheduled_dispatch_date,
       assigned_to_user_id: internalTransfer.assigned_to_user_id,
       logistics_status: internalTransfer.logistics_status,
-      has_exception: Boolean(
-        internalTransfer.exception_code ||
-          internalTransfer.exception_notes ||
-          internalTransfer.line_items.some(
-            (lineItem) => Boolean(lineItem.shortage_notes.trim()) || Boolean(lineItem.discrepancy_notes.trim()),
-          ),
-      ),
+      has_exception: Boolean(internalTransfer.exception_code || internalTransfer.exception_notes),
     }));
   }
 }

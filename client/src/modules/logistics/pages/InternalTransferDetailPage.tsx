@@ -1,13 +1,13 @@
 /**
- * File intent: render the Logistics Internal Transfer detail page with the refined lifecycle and line-level fulfillment handling for Phase 2B.
- * Design reminder for this file: keep lifecycle handling explicit and limited to the Internal Transfer flow.
+ * File intent: render the Logistics Internal Transfer detail page for the Phase 4A picking lifecycle.
+ * Design reminder for this file: keep execution controls explicit, picking-only, and fully separated from Stores demand records.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { Link, useRoute } from "wouter";
 import { useAccessControl } from "@/contexts/AccessControlContext";
 import { internalTransferRepository } from "@/modules/logistics/internal-transfers.repository";
-import type { InternalTransfer } from "@/modules/logistics/internal-transfers.types";
+import type { InternalTransfer, InternalTransferUpsert } from "@/modules/logistics/internal-transfers.types";
 import {
   canManageInternalTransferFulfillment,
   canManageInternalTransferHeader,
@@ -25,8 +25,35 @@ function canViewInternalTransfer(
   );
 }
 
-function sumLineValues(internalTransfer: InternalTransfer, field: "requested_quantity" | "picked_quantity" | "received_quantity") {
+function sumLineValues(internalTransfer: InternalTransfer, field: "requested_quantity" | "picked_quantity") {
   return internalTransfer.line_items.reduce((total, lineItem) => total + lineItem[field], 0);
+}
+
+function toUpsertPayload(internalTransfer: InternalTransfer): InternalTransferUpsert {
+  return {
+    request_date: internalTransfer.request_date,
+    source_location_id: internalTransfer.source_location_id,
+    destination_location_id: internalTransfer.destination_location_id,
+    requested_by_user_id: internalTransfer.requested_by_user_id,
+    approved_by_user_id: internalTransfer.approved_by_user_id,
+    scheduled_dispatch_date: internalTransfer.scheduled_dispatch_date,
+    logistics_status: internalTransfer.logistics_status,
+    priority: internalTransfer.priority,
+    notes: internalTransfer.notes,
+    line_items: internalTransfer.line_items.map((lineItem) => ({
+      ...lineItem,
+      picked_quantity: lineItem.picked_quantity ?? 0,
+      received_quantity: lineItem.received_quantity ?? 0,
+      shortage_notes: lineItem.shortage_notes ?? "",
+      discrepancy_notes: lineItem.discrepancy_notes ?? "",
+      line_notes: lineItem.line_notes ?? "",
+    })),
+    assigned_to_user_id: internalTransfer.assigned_to_user_id,
+    exception_code: internalTransfer.exception_code,
+    exception_notes: internalTransfer.exception_notes,
+    source_store_replenishment_request_id: internalTransfer.source_store_replenishment_request_id ?? null,
+    source_store_replenishment_request_number: internalTransfer.source_store_replenishment_request_number ?? null,
+  };
 }
 
 export default function InternalTransferDetailPage() {
@@ -35,6 +62,7 @@ export default function InternalTransferDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [internalTransfer, setInternalTransfer] = useState<InternalTransfer | null>(null);
+  const [isSavingPicking, setIsSavingPicking] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -95,6 +123,41 @@ export default function InternalTransferDetailPage() {
     }
   }
 
+  function updatePickedQuantity(lineId: string, nextValue: string) {
+    if (!internalTransfer) {
+      return;
+    }
+
+    setInternalTransfer({
+      ...internalTransfer,
+      line_items: internalTransfer.line_items.map((lineItem) =>
+        lineItem.id === lineId
+          ? {
+              ...lineItem,
+              picked_quantity: nextValue === "" ? 0 : Number(nextValue),
+            }
+          : lineItem,
+      ),
+    });
+  }
+
+  async function handleSavePickingProgress() {
+    if (!internalTransfer) {
+      return;
+    }
+
+    try {
+      setError("");
+      setIsSavingPicking(true);
+      const updated = await internalTransferRepository.update(internalTransfer.id, toUpsertPayload(internalTransfer));
+      setInternalTransfer(updated);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to save picking progress.");
+    } finally {
+      setIsSavingPicking(false);
+    }
+  }
+
   const nextStatuses = useMemo(
     () => (internalTransfer ? getNextInternalTransferStatuses(internalTransfer.logistics_status) : []),
     [internalTransfer],
@@ -128,24 +191,20 @@ export default function InternalTransferDetailPage() {
 
   const requestedTotal = sumLineValues(internalTransfer, "requested_quantity");
   const pickedTotal = sumLineValues(internalTransfer, "picked_quantity");
-  const receivedTotal = sumLineValues(internalTransfer, "received_quantity");
-  const hasPartialFulfillment = pickedTotal < requestedTotal || receivedTotal < pickedTotal;
-  const hasLineDiscrepancy = internalTransfer.line_items.some(
-    (lineItem) => Boolean(lineItem.shortage_notes.trim()) || Boolean(lineItem.discrepancy_notes.trim()),
-  );
+  const canEditPicking = canManageInternalTransferFulfillment(internalTransfer.logistics_status);
+  const linkedStoresRequest = internalTransfer.source_store_replenishment_request_number;
 
   return (
     <section>
       <header>
         <p>Logistics</p>
         <h1>{internalTransfer.transfer_order_number}</h1>
-        <p>Internal Transfer detail page with refined picking, transit, and receiving controls for Phase 2B.</p>
+        <p>Internal Transfer execution is now extended into the Phase 4A picking stage only.</p>
       </header>
 
       <p>
         <Link href="/logistics/transfer-orders">Back to Transfer Orders</Link>{" "}
-        {(canManageInternalTransferHeader(internalTransfer.logistics_status) ||
-          canManageInternalTransferFulfillment(internalTransfer.logistics_status)) ? (
+        {(canManageInternalTransferHeader(internalTransfer.logistics_status) || canEditPicking) ? (
           <Link href={`/logistics/transfer-orders/${internalTransfer.id}/edit`}>Edit Transfer Order</Link>
         ) : null}
       </p>
@@ -171,10 +230,6 @@ export default function InternalTransferDetailPage() {
             <td>{internalTransfer.requested_by_user_id}</td>
           </tr>
           <tr>
-            <th>Approved by</th>
-            <td>{internalTransfer.approved_by_user_id || "—"}</td>
-          </tr>
-          <tr>
             <th>Assigned to</th>
             <td>{internalTransfer.assigned_to_user_id || "—"}</td>
           </tr>
@@ -187,28 +242,12 @@ export default function InternalTransferDetailPage() {
             <td>{internalTransfer.priority}</td>
           </tr>
           <tr>
-            <th>Picked at</th>
+            <th>Picking started at</th>
             <td>{internalTransfer.picked_at || "—"}</td>
           </tr>
           <tr>
-            <th>Dispatched at</th>
-            <td>{internalTransfer.dispatched_at || "—"}</td>
-          </tr>
-          <tr>
-            <th>Received at</th>
-            <td>{internalTransfer.received_at || "—"}</td>
-          </tr>
-          <tr>
-            <th>Completed at</th>
-            <td>{internalTransfer.completed_at || "—"}</td>
-          </tr>
-          <tr>
-            <th>Partial fulfillment</th>
-            <td>{hasPartialFulfillment ? "Yes" : "No"}</td>
-          </tr>
-          <tr>
-            <th>Line discrepancies</th>
-            <td>{hasLineDiscrepancy ? "Yes" : "No"}</td>
+            <th>Linked Stores request</th>
+            <td>{linkedStoresRequest || "—"}</td>
           </tr>
           <tr>
             <th>Notes</th>
@@ -218,7 +257,7 @@ export default function InternalTransferDetailPage() {
       </table>
 
       <section>
-        <h2>Fulfillment Summary</h2>
+        <h2>Picking Progress Summary</h2>
         <table>
           <tbody>
             <tr>
@@ -228,10 +267,6 @@ export default function InternalTransferDetailPage() {
             <tr>
               <th>Total picked</th>
               <td>{pickedTotal}</td>
-            </tr>
-            <tr>
-              <th>Total received</th>
-              <td>{receivedTotal}</td>
             </tr>
           </tbody>
         </table>
@@ -246,9 +281,6 @@ export default function InternalTransferDetailPage() {
               <th>Base Unit</th>
               <th>Requested</th>
               <th>Picked</th>
-              <th>Received</th>
-              <th>Shortage Notes</th>
-              <th>Discrepancy Notes</th>
               <th>Line Notes</th>
             </tr>
           </thead>
@@ -258,38 +290,55 @@ export default function InternalTransferDetailPage() {
                 <td>{lineItem.item_name}</td>
                 <td>{lineItem.base_unit}</td>
                 <td>{lineItem.requested_quantity}</td>
-                <td>{lineItem.picked_quantity}</td>
-                <td>{lineItem.received_quantity}</td>
-                <td>{lineItem.shortage_notes || "—"}</td>
-                <td>{lineItem.discrepancy_notes || "—"}</td>
+                <td>
+                  {canEditPicking ? (
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      max={String(lineItem.requested_quantity)}
+                      value={String(lineItem.picked_quantity)}
+                      onChange={(event) => updatePickedQuantity(lineItem.id, event.target.value)}
+                    />
+                  ) : (
+                    lineItem.picked_quantity
+                  )}
+                </td>
                 <td>{lineItem.line_notes || "—"}</td>
               </tr>
             ))}
           </tbody>
         </table>
+
+        {canEditPicking ? (
+          <p>
+            <button type="button" onClick={handleSavePickingProgress} disabled={isSavingPicking}>
+              {isSavingPicking ? "Saving Picking Progress..." : "Save Picking Progress"}
+            </button>
+          </p>
+        ) : null}
       </section>
 
       <section>
         <h2>Lifecycle / Status Flow</h2>
         <p>
-          The refined Phase 2B lifecycle remains draft → pending review → approved → picking → in transit → completed,
-          but the transition rules are now stricter. A transfer must be assigned before picking, must have at least one picked
-          quantity before moving to in transit, and must have recorded received quantities before completion.
+          Phase 4A is limited to the picking stage. Internal Transfer remains a Logistics execution object, and this page does
+          not push execution state back into Stores.
         </p>
         <p>
-          Partial fulfillment is supported. If picked quantity is less than requested quantity, shortage notes should be recorded.
-          If received quantity is less than picked quantity, discrepancy notes should be recorded.
+          Picking can begin only when the transfer is assigned and has at least one line item. Dispatch, in-transit handling,
+          receiving, discrepancy workflows, and inventory integration remain intentionally out of scope.
         </p>
         {nextStatuses.length > 0 ? (
           <p>
             {nextStatuses.map((status) => (
               <button key={status} type="button" onClick={() => handleTransition(status)}>
-                Move to {sharedLogisticsStatusLabels[status]}
+                {status === "picking" ? "Start Picking" : `Move to ${sharedLogisticsStatusLabels[status]}`}
               </button>
             ))}
           </p>
         ) : (
-          <p>No further lifecycle transition is available for this transfer order.</p>
+          <p>No further lifecycle transition is available for this transfer order in Phase 4A.</p>
         )}
       </section>
     </section>
