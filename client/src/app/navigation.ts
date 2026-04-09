@@ -1,4 +1,4 @@
-/*
+/**
  * File intent: define architecture-first navigation metadata for Aroma System V2.
  * Design reminder for this file: structure over appearance, no visual exploration, keep routing and module boundaries explicit.
  */
@@ -45,7 +45,10 @@ export const storesItems: SidebarItem[] = [
   { title: "Replenishment Requests", path: "/stores/replenishment-requests" },
 ];
 
-export const inventoryItems: SidebarItem[] = [{ title: "Inventory Overview", path: "/inventory/overview" }];
+export const inventoryItems: SidebarItem[] = [
+  { title: "Inventory Overview", path: "/inventory/overview" },
+  { title: "Transaction History", path: "/inventory/transactions" },
+];
 
 export const sidebarSections: SidebarSection[] = [
   {

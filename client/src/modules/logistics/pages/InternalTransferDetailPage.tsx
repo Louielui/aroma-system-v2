@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useRoute } from "wouter";
 import { useAccessControl } from "@/contexts/AccessControlContext";
+import { inventoryRepository } from "@/modules/inventory/inventory.repository";
 import { internalTransferRepository } from "@/modules/logistics/internal-transfers.repository";
 import type { InternalTransfer, InternalTransferUpsert } from "@/modules/logistics/internal-transfers.types";
 import {
@@ -88,6 +89,7 @@ export default function InternalTransferDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [internalTransfer, setInternalTransfer] = useState<InternalTransfer | null>(null);
+  const [inventoryTransactionGroupId, setInventoryTransactionGroupId] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
 
@@ -121,7 +123,14 @@ export default function InternalTransferDetailPage() {
         return;
       }
 
+      const relatedInventoryGroup = await inventoryRepository.getTransactionGroupBySource("logistics", record.id);
+
+      if (!isMounted) {
+        return;
+      }
+
       setInternalTransfer(record);
+      setInventoryTransactionGroupId(relatedInventoryGroup?.id ?? "");
       setIsLoading(false);
     }
 
@@ -145,7 +154,9 @@ export default function InternalTransferDetailPage() {
         nextStatus,
         currentUser?.id ?? "",
       );
+      const relatedInventoryGroup = await inventoryRepository.getTransactionGroupBySource("logistics", updated.id);
       setInternalTransfer(updated);
+      setInventoryTransactionGroupId(relatedInventoryGroup?.id ?? "");
     } catch (transitionError) {
       setError(transitionError instanceof Error ? transitionError.message : "Unable to update transfer status.");
     } finally {
@@ -329,6 +340,20 @@ export default function InternalTransferDetailPage() {
             <td>{linkedStoresRequest || "—"}</td>
           </tr>
           <tr>
+            <th>Inventory posting</th>
+            <td>
+              {inventoryTransactionGroupId ? (
+                <Link href={`/inventory/transaction-groups/${inventoryTransactionGroupId}`}>
+                  View transaction group {inventoryTransactionGroupId}
+                </Link>
+              ) : internalTransfer.logistics_status === "received" ? (
+                "Inventory posting not found"
+              ) : (
+                "Inventory posting will appear after receipt posting is completed"
+              )}
+            </td>
+          </tr>
+          <tr>
             <th>Exception summary</th>
             <td>{internalTransfer.exception_notes || "—"}</td>
           </tr>
@@ -341,6 +366,15 @@ export default function InternalTransferDetailPage() {
 
       <section>
         <h2>Execution Summary</h2>
+        <p>
+          {inventoryTransactionGroupId ? (
+            <>
+              This receipt has an Inventory posting group. <Link href={`/inventory/transaction-groups/${inventoryTransactionGroupId}`}>Review Inventory posting details</Link>
+            </>
+          ) : (
+            "No Inventory posting group is linked yet."
+          )}
+        </p>
         <table>
           <tbody>
             <tr>

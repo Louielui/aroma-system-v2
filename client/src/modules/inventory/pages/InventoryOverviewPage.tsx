@@ -1,8 +1,10 @@
 /**
- * File intent: provide a read-only Inventory foundation overview page for locations, balances, and ledger transactions.
- * Design reminder for this file: keep Inventory visible but passive, with no write actions and no mutation of Stores or Logistics state.
+ * File intent: provide a read-only Inventory overview page for balances, recent ledger activity, and audit navigation.
+ * Design reminder for this file: keep Inventory visible and operationally useful without introducing any edit or posting controls.
  */
 
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "wouter";
 import { inventoryItems } from "@/app/navigation";
 import { useAccessControl } from "@/contexts/AccessControlContext";
 import { inventoryRepository } from "@/modules/inventory/inventory.repository";
@@ -12,8 +14,10 @@ import type {
   InventoryTransaction,
   InventoryTransactionGroup,
 } from "@/modules/inventory/inventory.types";
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "wouter";
+
+function formatQuantity(value: number) {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
+}
 
 export default function InventoryOverviewPage() {
   const { filterByAllowedLocations } = useAccessControl();
@@ -61,14 +65,32 @@ export default function InventoryOverviewPage() {
     [transactionGroups],
   );
 
+  const groupedBalances = useMemo(() => {
+    return balances
+      .slice()
+      .sort((left, right) => {
+        const leftLocation = locationMap.get(left.location_id) ?? left.location_id;
+        const rightLocation = locationMap.get(right.location_id) ?? right.location_id;
+        const locationCompare = leftLocation.localeCompare(rightLocation);
+        return locationCompare !== 0 ? locationCompare : left.item_name.localeCompare(right.item_name);
+      });
+  }, [balances, locationMap]);
+
+  const recentTransactions = useMemo(() => transactions.slice(0, 8), [transactions]);
+  const recentGroups = useMemo(() => {
+    return transactionGroups
+      .filter((group) => group.source_module !== "inventory" || group.source_document_type !== "opening_balance")
+      .slice(0, 8);
+  }, [transactionGroups]);
+
   return (
     <section>
       <header>
         <p>Inventory</p>
-        <h1>Inventory Foundation Overview</h1>
+        <h1>Inventory Overview</h1>
         <p>
-          This phase exposes passive Inventory structures only. It does not post stock automatically, mutate
-          Logistics transfers, or replace Stores demand records.
+          View current on-hand quantities by item and location, inspect recent ledger activity, and drill into posting
+          groups without exposing any edit or posting controls.
         </p>
       </header>
 
@@ -83,44 +105,18 @@ export default function InventoryOverviewPage() {
         </ul>
       </nav>
 
+      <p>
+        <Link href="/inventory/transactions">Open full transaction history</Link>
+      </p>
+
       {isLoading ? (
-        <p>Loading inventory foundation data...</p>
+        <p>Loading inventory visibility data...</p>
       ) : (
         <>
           <section>
-            <h2>Inventory Locations</h2>
-            {locations.length === 0 ? (
-              <p>No inventory locations available for your allowed locations.</p>
-            ) : (
-              <table>
-                <thead>
-                  <tr>
-                    <th>Code</th>
-                    <th>Name</th>
-                    <th>Type</th>
-                    <th>Parent</th>
-                    <th>Active</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {locations.map((location) => (
-                    <tr key={location.id}>
-                      <td>{location.code}</td>
-                      <td>{location.name}</td>
-                      <td>{location.location_type}</td>
-                      <td>{location.parent_location_id ? locationMap.get(location.parent_location_id) ?? location.parent_location_id : "-"}</td>
-                      <td>{location.is_active ? "Yes" : "No"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </section>
-
-          <section>
-            <h2>Inventory Balances</h2>
-            {balances.length === 0 ? (
-              <p>No inventory balances are available yet.</p>
+            <h2>Inventory Balances by Item and Location</h2>
+            {groupedBalances.length === 0 ? (
+              <p>No inventory balances are available for your allowed locations.</p>
             ) : (
               <table>
                 <thead>
@@ -128,17 +124,17 @@ export default function InventoryOverviewPage() {
                     <th>Location</th>
                     <th>Item</th>
                     <th>Base Unit</th>
-                    <th>On Hand</th>
+                    <th>On Hand Quantity</th>
                     <th>Last Transaction At</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {balances.map((balance) => (
+                  {groupedBalances.map((balance) => (
                     <tr key={balance.id}>
                       <td>{locationMap.get(balance.location_id) ?? balance.location_id}</td>
                       <td>{balance.item_name}</td>
                       <td>{balance.base_unit}</td>
-                      <td>{balance.on_hand_quantity}</td>
+                      <td>{formatQuantity(balance.on_hand_quantity)}</td>
                       <td>{balance.last_transaction_at ?? "-"}</td>
                     </tr>
                   ))}
@@ -148,8 +144,50 @@ export default function InventoryOverviewPage() {
           </section>
 
           <section>
-            <h2>Inventory Ledger</h2>
-            {transactions.length === 0 ? (
+            <h2>Recent Transaction Groups</h2>
+            {recentGroups.length === 0 ? (
+              <p>No posted transaction groups are available yet.</p>
+            ) : (
+              <table>
+                <thead>
+                  <tr>
+                    <th>Occurred At</th>
+                    <th>Group ID</th>
+                    <th>Source</th>
+                    <th>Posting Status</th>
+                    <th>Source Transfer</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentGroups.map((group) => (
+                    <tr key={group.id}>
+                      <td>{group.occurred_at}</td>
+                      <td>
+                        <Link href={`/inventory/transaction-groups/${group.id}`}>{group.id}</Link>
+                      </td>
+                      <td>
+                        {group.source_module} / {group.source_document_type}
+                      </td>
+                      <td>{group.posting_status}</td>
+                      <td>
+                        {group.source_document_type === "internal_transfer" ? (
+                          <Link href={`/logistics/transfer-orders/${group.source_document_id}`}>
+                            {group.source_document_id}
+                          </Link>
+                        ) : (
+                          group.source_document_id
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+
+          <section>
+            <h2>Recent Ledger Activity</h2>
+            {recentTransactions.length === 0 ? (
               <p>No inventory transactions are available yet.</p>
             ) : (
               <table>
@@ -159,15 +197,13 @@ export default function InventoryOverviewPage() {
                     <th>Location</th>
                     <th>Item</th>
                     <th>Type</th>
-                    <th>Reason</th>
                     <th>Quantity Delta</th>
                     <th>Balance After</th>
-                    <th>Source</th>
-                    <th>Group Status</th>
+                    <th>Group</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {transactions.map((transaction) => {
+                  {recentTransactions.map((transaction) => {
                     const group = transaction.transaction_group_id
                       ? transactionGroupMap.get(transaction.transaction_group_id)
                       : null;
@@ -178,13 +214,15 @@ export default function InventoryOverviewPage() {
                         <td>{locationMap.get(transaction.location_id) ?? transaction.location_id}</td>
                         <td>{transaction.item_name}</td>
                         <td>{transaction.transaction_type}</td>
-                        <td>{transaction.reason_code}</td>
-                        <td>{transaction.quantity_delta}</td>
-                        <td>{transaction.balance_after ?? "-"}</td>
+                        <td>{formatQuantity(transaction.quantity_delta)}</td>
+                        <td>{transaction.balance_after == null ? "-" : formatQuantity(transaction.balance_after)}</td>
                         <td>
-                          {transaction.source_module} / {transaction.source_document_type} / {transaction.source_document_id}
+                          {group ? (
+                            <Link href={`/inventory/transaction-groups/${group.id}`}>{group.id}</Link>
+                          ) : (
+                            "-"
+                          )}
                         </td>
-                        <td>{group?.posting_status ?? "-"}</td>
                       </tr>
                     );
                   })}
