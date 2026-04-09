@@ -1,5 +1,5 @@
 /**
- * File intent: define the HR employee document and compliance MVP domain model.
+ * File intent: define the HR employee document and compliance domain model.
  * Design reminder for this file: keep HR compliance independent from Stores, Logistics, and Inventory; prefer simple UI-ready and repository-ready shapes.
  */
 
@@ -18,6 +18,8 @@ export type UploadedByType = "employee" | "hr";
 
 export type ComplianceStatus = "compliant" | "attention_required" | "non_compliant";
 
+export type DocumentStorageProvider = "google_drive" | "manual";
+
 export type EmployeeProfile = {
   id: string;
   person_id: string;
@@ -34,6 +36,9 @@ export type EmployeeDocument = {
   document_type: HrDocumentType;
   document_label: string;
   file_name?: string;
+  file_mime_type?: string;
+  google_drive_file_id?: string;
+  storage_provider?: DocumentStorageProvider;
   document_number?: string;
   issue_date?: string;
   expiry_date?: string;
@@ -52,6 +57,9 @@ export type EmployeeDocumentInput = {
   document_type: HrDocumentType;
   document_label: string;
   file_name?: string;
+  file_mime_type?: string;
+  google_drive_file_id?: string;
+  storage_provider?: DocumentStorageProvider;
   document_number?: string;
   issue_date?: string;
   expiry_date?: string;
@@ -108,4 +116,9 @@ export const complianceStatusLabels: Record<ComplianceStatus, string> = {
   compliant: "Compliant",
   attention_required: "Attention Required",
   non_compliant: "Non-Compliant",
+};
+
+export const documentStorageProviderLabels: Record<DocumentStorageProvider, string> = {
+  google_drive: "Google Drive",
+  manual: "Manual Link",
 };

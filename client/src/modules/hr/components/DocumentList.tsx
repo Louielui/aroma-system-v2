@@ -9,7 +9,12 @@ import {
   buildGoogleDriveOpenUrl,
   deriveDocumentDisplayStatus,
 } from "@/modules/hr/hr.validation";
-import { hrDocumentStatusLabels, hrDocumentTypeLabels, type EmployeeDocument } from "@/modules/hr/hr.types";
+import {
+  documentStorageProviderLabels,
+  hrDocumentStatusLabels,
+  hrDocumentTypeLabels,
+  type EmployeeDocument,
+} from "@/modules/hr/hr.types";
 
 type DocumentListProps = {
   documents: EmployeeDocument[];
@@ -269,9 +274,27 @@ export default function DocumentList({
                         </div>
                         <div>
                           <p style={{ margin: "0 0 0.25rem", color: "#64748b", fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                            Storage
+                          </p>
+                          <p style={{ margin: 0 }}>{documentStorageProviderLabels[document.storage_provider ?? "manual"]}</p>
+                        </div>
+                        <div>
+                          <p style={{ margin: "0 0 0.25rem", color: "#64748b", fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                            MIME Type
+                          </p>
+                          <p style={{ margin: 0 }}>{document.file_mime_type || "—"}</p>
+                        </div>
+                        <div>
+                          <p style={{ margin: "0 0 0.25rem", color: "#64748b", fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>
                             Reviewed By
                           </p>
                           <p style={{ margin: 0 }}>{document.reviewed_by_user_id || "—"}</p>
+                        </div>
+                        <div>
+                          <p style={{ margin: "0 0 0.25rem", color: "#64748b", fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                            Drive File ID
+                          </p>
+                          <p style={{ margin: 0 }}>{document.google_drive_file_id || "—"}</p>
                         </div>
                       </div>
 

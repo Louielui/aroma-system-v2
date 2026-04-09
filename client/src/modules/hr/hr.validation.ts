@@ -4,8 +4,10 @@
  */
 
 import { z } from "zod";
+import { getSupportedHrDocumentMimeTypeLabel, isSupportedHrDocumentMimeType } from "@/modules/hr/google-drive";
 import type {
   ComplianceStatus,
+  DocumentStorageProvider,
   EmployeeDocument,
   EmployeeDocumentInput,
   EmployeeProfile,
@@ -16,24 +18,54 @@ import type {
 
 const documentTypeSchema = z.enum(["passport", "work_permit", "food_safety"]);
 const uploadedByTypeSchema = z.enum(["employee", "hr"]);
+const storageProviderSchema = z.enum(["google_drive", "manual"]);
 const googleDriveUrlPattern = /^https:\/\/(drive|docs)\.google\.com\/.+/i;
 
-export const employeeDocumentInputSchema = z.object({
-  employee_profile_id: z.string().trim().min(1, "Employee profile is required"),
-  document_type: documentTypeSchema,
-  document_label: z.string().trim().min(1, "Document label is required").max(200),
-  file_name: z.string().trim().max(200).optional().or(z.literal("")),
-  document_number: z.string().trim().max(120).optional().or(z.literal("")),
-  issue_date: z.string().trim().optional().or(z.literal("")),
-  expiry_date: z.string().trim().optional().or(z.literal("")),
-  file_url: z
-    .string()
-    .trim()
-    .url("Enter a valid URL")
-    .regex(googleDriveUrlPattern, "Enter a valid Google Drive or Google Docs link")
-    .max(1000),
-  uploaded_by_type: uploadedByTypeSchema,
-});
+export const employeeDocumentInputSchema = z
+  .object({
+    employee_profile_id: z.string().trim().min(1, "Employee profile is required"),
+    document_type: documentTypeSchema,
+    document_label: z.string().trim().min(1, "Document label is required").max(200),
+    file_name: z.string().trim().max(200).optional().or(z.literal("")),
+    file_mime_type: z.string().trim().max(200).optional().or(z.literal("")),
+    google_drive_file_id: z.string().trim().max(200).optional().or(z.literal("")),
+    storage_provider: storageProviderSchema.optional(),
+    document_number: z.string().trim().max(120).optional().or(z.literal("")),
+    issue_date: z.string().trim().optional().or(z.literal("")),
+    expiry_date: z.string().trim().optional().or(z.literal("")),
+    file_url: z.string().trim().url("Enter a valid URL").max(1000),
+    uploaded_by_type: uploadedByTypeSchema,
+  })
+  .superRefine((value, context) => {
+    if (!isGoogleDriveUrl(value.file_url)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["file_url"],
+        message: "Enter a valid Google Drive or Google Docs link",
+      });
+    }
+
+    const normalizedMimeType = normalizeOptionalString(value.file_mime_type);
+    if (normalizedMimeType && !isSupportedHrDocumentMimeType(normalizedMimeType)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["file_mime_type"],
+        message: `Unsupported document type. Allowed types: ${getSupportedHrDocumentMimeTypeLabel()}.`,
+      });
+    }
+
+    const extractedFileId = extractGoogleDriveFileId(value.file_url);
+    const normalizedFileId = normalizeOptionalString(value.google_drive_file_id) ?? extractedFileId ?? undefined;
+    const storageProvider = value.storage_provider ?? (normalizedFileId ? "google_drive" : "manual");
+
+    if (storageProvider === "google_drive" && !normalizedFileId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["file_url"],
+        message: "Google Drive selection is incomplete. Select a Drive file again or use the manual link fallback.",
+      });
+    }
+  });
 
 export const employeeDocumentReviewSchema = z.object({
   decision: z.enum(["approve", "reject"]),
@@ -46,6 +78,9 @@ export type EmployeeDocumentFormValues = {
   document_type: EmployeeDocumentInput["document_type"];
   document_label: string;
   file_name: string;
+  file_mime_type: string;
+  google_drive_file_id: string;
+  storage_provider: DocumentStorageProvider;
   document_number: string;
   issue_date: string;
   expiry_date: string;
@@ -159,6 +194,9 @@ export function createDefaultEmployeeDocumentFormValues(employeeProfileId = ""):
     document_type: "passport",
     document_label: "",
     file_name: "",
+    file_mime_type: "",
+    google_drive_file_id: "",
+    storage_provider: "manual",
     document_number: "",
     issue_date: "",
     expiry_date: "",
@@ -177,12 +215,18 @@ export function createDefaultEmployeeDocumentReviewValues(): EmployeeDocumentRev
 
 export function parseEmployeeDocumentInput(values: EmployeeDocumentFormValues): EmployeeDocumentInput {
   const validated = employeeDocumentInputSchema.parse(values);
+  const extractedFileId = extractGoogleDriveFileId(validated.file_url);
+  const googleDriveFileId = normalizeOptionalString(validated.google_drive_file_id) ?? extractedFileId ?? undefined;
+  const storageProvider = validated.storage_provider ?? (googleDriveFileId ? "google_drive" : "manual");
 
   return {
     employee_profile_id: validated.employee_profile_id,
     document_type: validated.document_type,
     document_label: validated.document_label,
     file_name: normalizeOptionalString(validated.file_name) ?? deriveGoogleDriveFileName(validated.file_url, validated.document_label),
+    file_mime_type: normalizeOptionalString(validated.file_mime_type),
+    google_drive_file_id: googleDriveFileId,
+    storage_provider: storageProvider,
     document_number: normalizeOptionalString(validated.document_number),
     issue_date: normalizeDateString(validated.issue_date),
     expiry_date: normalizeDateString(validated.expiry_date),

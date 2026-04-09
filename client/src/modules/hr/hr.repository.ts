@@ -176,6 +176,9 @@ function normalizeStoredSnapshot(snapshot: HrRepositorySnapshot): HrRepositorySn
     documents: snapshot.documents.map((document) => ({
       ...document,
       file_name: document.file_name ?? document.document_label,
+      google_drive_file_id: document.google_drive_file_id,
+      file_mime_type: document.file_mime_type,
+      storage_provider: document.storage_provider ?? (document.google_drive_file_id ? "google_drive" : "manual"),
     })),
   };
 }
@@ -312,6 +315,9 @@ class LocalHrRepository implements HrRepository {
       document_type: input.document_type,
       document_label: input.document_label,
       file_name: input.file_name ?? "",
+      file_mime_type: input.file_mime_type ?? "",
+      google_drive_file_id: input.google_drive_file_id ?? "",
+      storage_provider: input.storage_provider ?? "manual",
       document_number: input.document_number ?? "",
       issue_date: input.issue_date ?? "",
       expiry_date: input.expiry_date ?? "",
@@ -334,6 +340,9 @@ class LocalHrRepository implements HrRepository {
       document_type: parsedInput.document_type,
       document_label: parsedInput.document_label,
       file_name: parsedInput.file_name,
+      file_mime_type: parsedInput.file_mime_type,
+      google_drive_file_id: parsedInput.google_drive_file_id,
+      storage_provider: parsedInput.storage_provider,
       document_number: parsedInput.document_number,
       issue_date: parsedInput.issue_date,
       expiry_date: parsedInput.expiry_date,
