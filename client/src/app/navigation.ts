@@ -1,6 +1,6 @@
 /**
  * File intent: define architecture-first navigation metadata for Aroma System V2.
- * Design reminder for this file: structure over appearance, no visual exploration, keep routing and module boundaries explicit.
+ * Design reminder for this file: structure over appearance, keep module boundaries explicit, and preserve the separation between people management, onboarding, and employee document compliance.
  */
 
 export type SidebarItem = {
@@ -31,6 +31,8 @@ export const centralKitchenItems: SidebarItem[] = [
 export const hrItems: SidebarItem[] = [
   { title: "People / User Management", path: "/hr/people" },
   { title: "Onboarding", path: "/hr/onboarding" },
+  { title: "Employee Compliance", path: "/hr/employees" },
+  { title: "Document Review", path: "/hr/review" },
 ];
 
 export const logisticsItems: SidebarItem[] = [
